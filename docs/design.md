@@ -284,21 +284,37 @@ aft-ops version / completion
 ```
 [Pipeline List]  ──enter──▶  [Pipeline Detail]  ──l──▶  [Log View]
   N rows                       stages / history           terraform log
-  / filter                     failed action highlight    search, follow
-  f status filter
-  s sort key / o order         (future) release (confirm)
-  r refresh selected
-  R refresh all                (future) space: multi-select
+  / filter                     failed action             m mode switch
+  f status filter              ↑/↓ scroll                (future) search/follow
+  s sort key / o order
+  r/R refresh          ──x──▶  [Release]  (confirm → run → results)
+  space multi-select             count / targets / guard
   q quit
 ```
 
 - 現状（実装済み）の一覧キー: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
-  (last-update→status→account)・`o` 昇降順トグル・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。
-  既定ソートは last-update 降順（CLI と同一のコア `model.SortSummaries`）。詳細/ログ/multi-select は Phase 2 の続き
+  (last-update→status→account)・`o` 昇降順トグル・`enter` 詳細画面・`space` 選択トグル・
+  `x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。既定ソートは last-update 降順
+  （CLI と同一のコア `model.SortSummaries`）。選択行は先頭列に `✓`、header に `[N selected]`
+- 詳細画面（実装済み）: `enter` で選択パイプラインの `pipeline.Detail`（ステージ/アクション + 履歴 5 件）を
+  取得し viewport にスクロール表示。描画は CLI の `output.PipelineDetailText` を再利用（CLI と同一テキスト）。
+  `↑/↓` スクロール・`l` ログ画面・`q`/`esc` で一覧へ戻る
+- ログ画面（実装済み）: 詳細画面で `l` → 失敗 CodeBuild アクション（無ければ build id を持つ最後のアクション）の
+  ログを `logs.Fetch` で 1 回取得し viewport 表示。`m` で terraform→raw→summary をローカル切替（再フェッチなし。
+  描画は CLI `pipeline logs` と同一の `logs.Render`）。`↑/↓` スクロール・`q`/`esc` で戻る
+- Release 画面（実装済み・`internal/tui/release.go`）: 一覧で `space` 選択 → `x` で遷移。
+  confirm（対象一覧 `output.PipelineTable` 再利用 + 件数 + `max_targets` ガード判定。超過時は `y` を無効化し
+  「N 件外す」表示）→ 実行中は spinner + `Done/Total/Failed` 進捗 → 結果（`output.ReleaseTable` 再利用・
+  started/skipped/failed 集計）。実行は注入した `ReleaseFunc`（コア `pipeline.Release` + write client）で、
+  ガード・InProgress スキップは CLI と共通のコア層。完了後に任意キーで一覧へ戻り、起動した行を
+  `refreshNamesMsg` で RefreshOnly 再取得（InProgress へ更新）。TUI は stderr に書けないため cache 無効化は best-effort
 
-- ルートモデルが画面スタックを管理（push/pop）。各画面は独立した `tea.Model`
+- ルートモデルが画面スタックを管理（push/pop）。各画面は独立した `tea.Model`（`screen` interface）。
+  ナビゲーションは `pushMsg`/`popMsg` をルートが解釈し、それ以外はスタック最上位へ委譲。
+  リサイズは push/pop 時に最上位へ再配送。TUI への依存注入は `tui.Deps`（Fetch/Refresh/Detail/Logs/Release/
+  ReleaseLimit）に集約
 - 一覧はロード中も操作可能: キャッシュ済み情報を即表示 → バッチ取得の進捗に応じて行を逐次更新（batch の Progress chan を `tea.Cmd` で購読）
-- 実行中パイプラインがある場合は自動ポーリング（間隔は設定、既定 30s）
+- 実行中パイプラインがある場合は自動ポーリング（間隔は設定、既定 30s）※未実装（Phase 3 候補）
 - multi-select → 一括 release（確認ダイアログに件数・対象を明示、F5 ガードは CLI と共通のコア層で実施）
 
 ### 9.2 CLI との整合

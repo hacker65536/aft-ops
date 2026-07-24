@@ -85,7 +85,75 @@ func runTUI(ctx context.Context, app *App) error {
 		return summaries, nil
 	}
 
-	if err := tui.Run(ctx, fetch, refresh); err != nil {
+	// detail loads one pipeline's stage/action state plus recent history for
+	// the detail screen — the same core path as `pipeline show`.
+	detail := func(ctx context.Context, name string) (*model.PipelineDetail, error) {
+		svc, err := app.PipelineService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resolver, err := loadResolver(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		return svc.Detail(ctx, name, 5, resolver)
+	}
+
+	// logsFn fetches a CodeBuild build's raw log lines for the log screen —
+	// the same core path as `pipeline logs`. The screen applies the
+	// terraform/raw/summary rendering locally.
+	logsFn := func(ctx context.Context, buildID string) ([]string, error) {
+		svc, err := app.LogsService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		bl, err := svc.Fetch(ctx, buildID)
+		if err != nil {
+			return nil, err
+		}
+		return bl.Lines, nil
+	}
+
+	// release triggers Release change on the selected targets — the same core
+	// path and guard as `pipeline release`. In-progress skipping comes from
+	// config. Cache invalidation is best-effort (the screen refreshes the
+	// started rows afterward regardless); stderr is off-limits in the TUI.
+	release := func(ctx context.Context, targets []model.PipelineSummary, onProgress func(batch.Progress)) ([]model.ReleaseResult, error) {
+		svc, err := app.PipelineService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		start, err := app.StartClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		results := svc.Release(ctx, start, pipeline.ReleaseRequest{
+			Targets:        targets,
+			SkipInProgress: app.Cfg.Release.SkipInProgress,
+		}, onProgress)
+
+		var started []string
+		for _, r := range results {
+			if r.ExecutionID != "" && r.Error == "" {
+				started = append(started, r.PipelineName)
+			}
+		}
+		_ = svc.InvalidateStatuses(started)
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		return results, nil
+	}
+
+	deps := tui.Deps{
+		Fetch:        fetch,
+		Refresh:      refresh,
+		Detail:       detail,
+		Logs:         logsFn,
+		Release:      release,
+		ReleaseLimit: app.Cfg.Release.MaxTargets,
+	}
+	if err := tui.Run(ctx, deps); err != nil {
 		return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 	}
 	return nil

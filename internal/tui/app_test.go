@@ -21,7 +21,7 @@ func sum(name, id, acct string, st model.Status) model.PipelineSummary {
 
 func testModel(t *testing.T, refresh Refresh) uiModel {
 	t.Helper()
-	m := newModel(context.Background(), nil, refresh)
+	m := newModel(context.Background(), Deps{Refresh: refresh})
 	m.items = []model.PipelineSummary{
 		sum("111111111111-customizations-pipeline", "111111111111", "alpha", model.StatusFailed),
 		sum("222222222222-customizations-pipeline", "222222222222", "bravo", model.StatusSucceeded),
@@ -52,7 +52,7 @@ func TestKeyRRefreshesSelected(t *testing.T) {
 
 // r with no rows (empty selection) must be a no-op, not a panic.
 func TestKeyRNoSelectionIsNoop(t *testing.T) {
-	m := newModel(context.Background(), nil, nil) // no items, empty visible
+	m := newModel(context.Background(), Deps{}) // no items, empty visible
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if next.(uiModel).loading {
 		t.Error("r with no selection should not start a refresh")
