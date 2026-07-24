@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
@@ -16,6 +18,7 @@ import (
 	"github.com/hacker65536/aft-ops/internal/cache"
 	"github.com/hacker65536/aft-ops/internal/config"
 	"github.com/hacker65536/aft-ops/internal/core/account"
+	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/pipeline"
 	"github.com/hacker65536/aft-ops/internal/metrics"
 	"github.com/hacker65536/aft-ops/internal/output"
@@ -106,6 +109,17 @@ func (a *App) BatchConfig() batch.Config {
 	}
 }
 
+// statusOptions builds the status-cache policy for read commands: a cached
+// status is served within StatusTTL, --refresh forces a full refetch, and
+// in-flight statuses are always refetched (they change fastest).
+func (a *App) statusOptions() pipeline.StatusOptions {
+	return pipeline.StatusOptions{
+		TTL:             a.Cfg.Cache.StatusTTL.D(),
+		RefreshAll:      a.Refresh,
+		RefreshInFlight: true,
+	}
+}
+
 // PipelineService builds the read-side pipeline service.
 func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
 	cfg, err := a.ReadAWS(ctx)
@@ -117,6 +131,18 @@ func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
 		Batch:       a.BatchConfig(),
 		Cache:       a.CacheStore(),
 		PipelineTTL: a.Cfg.Cache.PipelineTTL.D(),
+	}, nil
+}
+
+// LogsService builds the read-side CodeBuild + CloudWatch Logs service.
+func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
+	cfg, err := a.ReadAWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &logs.Service{
+		CodeBuild: codebuild.NewFromConfig(cfg),
+		Logs:      cloudwatchlogs.NewFromConfig(cfg),
 	}, nil
 }
 

@@ -6,7 +6,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -23,9 +22,13 @@ import (
 // core services).
 type Fetch func(ctx context.Context, refresh bool, onProgress func(batch.Progress)) ([]model.PipelineSummary, error)
 
+// Refresh force-refetches the statuses of just the given pipelines and
+// returns their updated summaries (wired to Statuses with RefreshOnly).
+type Refresh func(ctx context.Context, names []string, onProgress func(batch.Progress)) ([]model.PipelineSummary, error)
+
 // Run starts the TUI and blocks until exit.
-func Run(ctx context.Context, fetch Fetch) error {
-	m := newModel(ctx, fetch)
+func Run(ctx context.Context, fetch Fetch, refresh Refresh) error {
+	m := newModel(ctx, fetch, refresh)
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 	if err == tea.ErrProgramKilled || err == context.Canceled {
 		return nil // normal Ctrl-C path
@@ -36,6 +39,13 @@ func Run(ctx context.Context, fetch Fetch) error {
 type startMsg struct{ refresh bool }
 
 type fetchedMsg struct {
+	items []model.PipelineSummary
+	err   error
+}
+
+// refreshedMsg carries the result of a targeted (selected-row) refresh: the
+// updated summaries are merged into the existing list in place.
+type refreshedMsg struct {
 	items []model.PipelineSummary
 	err   error
 }
@@ -51,8 +61,9 @@ var statusCycle = []model.Status{
 }
 
 type uiModel struct {
-	ctx   context.Context
-	fetch Fetch
+	ctx     context.Context
+	fetch   Fetch
+	refresh Refresh
 
 	table   table.Model
 	filter  textinput.Model
@@ -60,16 +71,35 @@ type uiModel struct {
 	loading bool
 
 	items      []model.PipelineSummary
+	visible    []model.PipelineSummary // aligned with the table's current rows
 	progress   batch.Progress
 	progressCh chan batch.Progress
 	statusIdx  int
+	sortKey    model.SortKey
+	sortOrder  model.SortOrder
 	filtering  bool
 	err        error
 	width      int
 	height     int
 }
 
-func newModel(ctx context.Context, fetch Fetch) uiModel {
+// sortCycle is the s-key rotation over sort keys.
+var sortCycle = []model.SortKey{
+	model.SortByLastUpdate,
+	model.SortByStatus,
+	model.SortByAccount,
+}
+
+func nextSortKey(k model.SortKey) model.SortKey {
+	for i, c := range sortCycle {
+		if c == k {
+			return sortCycle[(i+1)%len(sortCycle)]
+		}
+	}
+	return sortCycle[0]
+}
+
+func newModel(ctx context.Context, fetch Fetch, refresh Refresh) uiModel {
 	ti := textinput.New()
 	ti.Placeholder = "filter by account name / id"
 	ti.Prompt = "/ "
@@ -88,7 +118,11 @@ func newModel(ctx context.Context, fetch Fetch) uiModel {
 		Background(lipgloss.Color("6"))
 	t.SetStyles(st)
 
-	return uiModel{ctx: ctx, fetch: fetch, table: t, filter: ti, spin: sp}
+	return uiModel{
+		ctx: ctx, fetch: fetch, refresh: refresh,
+		table: t, filter: ti, spin: sp,
+		sortKey: model.SortByLastUpdate, sortOrder: model.OrderDesc,
+	}
 }
 
 func columns(width int) []table.Column {
@@ -128,6 +162,29 @@ func (m uiModel) beginFetch(refresh bool) (uiModel, tea.Cmd) {
 	return m, tea.Batch(fetchCmd, waitProgress(ch), m.spin.Tick)
 }
 
+// beginRefreshOne force-refetches a single pipeline's status and returns a
+// refreshedMsg to merge it back into the list.
+func (m uiModel) beginRefreshOne(name string) (uiModel, tea.Cmd) {
+	ch := make(chan batch.Progress, 8)
+	m.loading = true
+	m.err = nil
+	m.progress = batch.Progress{}
+	m.progressCh = ch
+
+	refresh, ctx := m.refresh, m.ctx
+	refreshCmd := func() tea.Msg {
+		items, err := refresh(ctx, []string{name}, func(p batch.Progress) {
+			select {
+			case ch <- p:
+			default:
+			}
+		})
+		close(ch)
+		return refreshedMsg{items: items, err: err}
+	}
+	return m, tea.Batch(refreshCmd, waitProgress(ch), m.spin.Tick)
+}
+
 func waitProgress(ch chan batch.Progress) tea.Cmd {
 	return func() tea.Msg {
 		p, ok := <-ch
@@ -160,15 +217,28 @@ func (m uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		items := msg.items
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].AccountName != items[j].AccountName {
-				return items[i].AccountName < items[j].AccountName
+		m.items = msg.items
+		m.resort()
+		return m, nil
+
+	case refreshedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		cur := m.table.Cursor()
+		byName := make(map[string]int, len(m.items))
+		for i, it := range m.items {
+			byName[it.PipelineName] = i
+		}
+		for _, u := range msg.items {
+			if i, ok := byName[u.PipelineName]; ok {
+				m.items[i] = u
 			}
-			return items[i].AccountID < items[j].AccountID
-		})
-		m.items = items
+		}
 		m.applyFilter()
+		m.table.SetCursor(cur) // keep the operator's place
 		return m, nil
 
 	case spinner.TickMsg:
@@ -217,11 +287,31 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusIdx = (m.statusIdx + 1) % len(statusCycle)
 		m.applyFilter()
 		return m, nil
+	case "s":
+		cur := m.table.Cursor()
+		m.sortKey = nextSortKey(m.sortKey)
+		m.resort()
+		m.table.SetCursor(cur)
+		return m, nil
+	case "o":
+		cur := m.table.Cursor()
+		if m.sortOrder == model.OrderAsc {
+			m.sortOrder = model.OrderDesc
+		} else {
+			m.sortOrder = model.OrderAsc
+		}
+		m.resort()
+		m.table.SetCursor(cur)
+		return m, nil
 	case "r":
 		if m.loading {
 			return m, nil
 		}
-		return m.beginFetch(false)
+		cur := m.table.Cursor()
+		if cur < 0 || cur >= len(m.visible) {
+			return m, nil
+		}
+		return m.beginRefreshOne(m.visible[cur].PipelineName)
 	case "R":
 		if m.loading {
 			return m, nil
@@ -234,12 +324,19 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// resort re-sorts items by the current key/order and rebuilds the rows.
+func (m *uiModel) resort() {
+	model.SortSummaries(m.items, m.sortKey, m.sortOrder)
+	m.applyFilter()
+}
+
 // applyFilter recomputes visible rows from items + filter text + status.
 func (m *uiModel) applyFilter() {
 	q := strings.ToLower(m.filter.Value())
 	want := statusCycle[m.statusIdx]
 
 	var rows []table.Row
+	var visible []model.PipelineSummary
 	for _, it := range m.items {
 		if want != "" && it.Status() != want {
 			continue
@@ -262,8 +359,10 @@ func (m *uiModel) applyFilter() {
 			name = "-"
 		}
 		rows = append(rows, table.Row{name, it.AccountID, status, last})
+		visible = append(visible, it)
 	}
 	m.table.SetRows(rows)
+	m.visible = visible
 }
 
 var (
@@ -279,6 +378,7 @@ func (m uiModel) View() string {
 	if want := statusCycle[m.statusIdx]; want != "" {
 		header += dimStyle.Render("  [status: " + string(want) + "]")
 	}
+	header += dimStyle.Render("  [sort: " + string(m.sortKey) + " " + orderArrow(m.sortOrder) + "]")
 	if m.loading {
 		header += "  " + m.spin.View() +
 			fmt.Sprintf(" fetching %d/%d", m.progress.Done, m.progress.Total)
@@ -294,6 +394,13 @@ func (m uiModel) View() string {
 		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")
 	}
 	b.WriteString(m.table.View() + "\n")
-	b.WriteString(dimStyle.Render("q quit · / filter · f status · r refresh · R hard refresh"))
+	b.WriteString(dimStyle.Render("q quit · / filter · f status · s sort · o order · r refresh selected · R refresh all"))
 	return b.String()
+}
+
+func orderArrow(o model.SortOrder) string {
+	if o == model.OrderAsc {
+		return "↑"
+	}
+	return "↓"
 }

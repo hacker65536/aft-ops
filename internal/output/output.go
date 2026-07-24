@@ -132,6 +132,39 @@ func PipelineCounts(w io.Writer, items []model.PipelineSummary) {
 	fmt.Fprintf(w, "total=%d %s\n", len(items), strings.Join(parts, " "))
 }
 
+// StatusFreshness prints how fresh the listed statuses are: how many were
+// just refetched versus served from cache, and the age of the oldest cached
+// entry. Companion to PipelineCounts on stderr; makes staleness visible now
+// that statuses are cached.
+func StatusFreshness(w io.Writer, items []model.PipelineSummary, ttl time.Duration) {
+	if len(items) == 0 {
+		return
+	}
+	fresh, cached := 0, 0
+	var oldest time.Time
+	now := time.Now()
+	for _, p := range items {
+		if p.StatusFetchedAt == nil {
+			continue
+		}
+		age := now.Sub(*p.StatusFetchedAt)
+		if age <= 2*time.Second {
+			fresh++
+		} else {
+			cached++
+			if oldest.IsZero() || p.StatusFetchedAt.Before(oldest) {
+				oldest = *p.StatusFetchedAt
+			}
+		}
+	}
+	if cached == 0 {
+		fmt.Fprintf(w, "statuses: %d refetched\n", fresh)
+		return
+	}
+	fmt.Fprintf(w, "statuses: %d refetched, %d from cache (oldest %s ago, ttl %s)\n",
+		fresh, cached, humanDuration(now.Sub(oldest)), humanDuration(ttl))
+}
+
 // ReleaseTable renders release results.
 func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -161,6 +194,86 @@ func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, r.AccountID, result, detail)
 	}
 	tw.Flush()
+}
+
+// PipelineDetailText renders `pipeline show` for humans: a header, the
+// stage/action state table, and recent execution history.
+func PipelineDetailText(w io.Writer, d model.PipelineDetail, color bool) {
+	name := d.AccountName
+	if name == "" {
+		name = "-"
+	}
+	fmt.Fprintf(w, "Pipeline: %s\n", d.PipelineName)
+	fmt.Fprintf(w, "Account:  %s (%s)\n\n", name, d.AccountID)
+
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "STAGE\tACTION\tSTATUS\tLAST CHANGE\tDETAIL")
+	for _, st := range d.Stages {
+		if len(st.Actions) == 0 {
+			fmt.Fprintf(tw, "%s\t-\t%s\t-\t-\n", st.Name, styleStatus(st.Status, color))
+			continue
+		}
+		for i, a := range st.Actions {
+			stageCol := st.Name
+			if i > 0 {
+				stageCol = "" // group actions under their stage
+			}
+			last := "-"
+			if a.LastChange != nil {
+				last = humanTime(*a.LastChange)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+				stageCol, a.Name, styleStatus(a.Status, color), last, actionDetail(a))
+		}
+	}
+	tw.Flush()
+
+	if len(d.History) > 0 {
+		fmt.Fprintln(w, "\nRecent executions:")
+		htw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(htw, "EXECUTION\tSTATUS\tSTARTED\tREVISION")
+		for _, e := range d.History {
+			started := "-"
+			if e.StartTime != nil {
+				started = humanTime(*e.StartTime)
+			}
+			fmt.Fprintf(htw, "%s\t%s\t%s\t%s\n",
+				shortID(e.ID), styleStatus(e.Status, color), started, revisionSummary(e.Revisions))
+		}
+		htw.Flush()
+	}
+}
+
+// actionDetail is the most useful one-liner for an action: its error
+// message when failed, otherwise its summary.
+func actionDetail(a model.ActionState) string {
+	switch {
+	case a.ErrorMessage != "":
+		return truncate(a.ErrorMessage, 60)
+	case a.Summary != "":
+		return truncate(a.Summary, 60)
+	default:
+		return "-"
+	}
+}
+
+func revisionSummary(revs []model.Revision) string {
+	if len(revs) == 0 {
+		return "-"
+	}
+	r := revs[0]
+	if r.Summary != "" {
+		return truncate(strings.TrimSpace(r.Summary), 40)
+	}
+	return shortID(r.RevisionID)
+}
+
+func truncate(s string, n int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
 
 // AccountTable renders `account list`.

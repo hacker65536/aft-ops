@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/hacker65536/aft-ops/internal/batch"
+	"github.com/hacker65536/aft-ops/internal/core/account"
+	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/model"
 	"github.com/hacker65536/aft-ops/internal/core/pipeline"
 	"github.com/hacker65536/aft-ops/internal/output"
@@ -24,7 +25,76 @@ func newPipelineCmd(app *App) *cobra.Command {
 		Aliases: []string{"pl"},
 		Short:   "Operate AFT per-account customizations pipelines",
 	}
-	cmd.AddCommand(newPipelineListCmd(app), newPipelineReleaseCmd(app))
+	cmd.AddCommand(
+		newPipelineListCmd(app),
+		newPipelineShowCmd(app),
+		newPipelineRefreshCmd(app),
+		newPipelineLogsCmd(app),
+		newPipelineReleaseCmd(app),
+	)
+	return cmd
+}
+
+// ---- pipeline refresh ----
+
+func newPipelineRefreshCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "refresh <target...>",
+		Short: "Refetch the status of specific pipelines into the cache",
+		Long: `Refetch just the given pipelines' latest execution status and update the
+status cache, without fanning out over every pipeline.
+
+Each target may be a pipeline name, an account id, or an account name.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			svc, err := app.PipelineService(ctx)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			names, _, err := svc.Inventory(ctx, app.Refresh)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			resolver, err := app.Resolver(ctx)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+
+			targets, err := selectTargets(summariesFromNames(names, resolver), args, "", nil)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			if len(targets) == 0 {
+				fmt.Fprintln(os.Stderr, "no matching targets")
+				return nil
+			}
+			targetNames := make([]string, len(targets))
+			refreshSet := make(map[string]bool, len(targets))
+			for i, t := range targets {
+				targetNames[i] = t.PipelineName
+				refreshSet[t.PipelineName] = true
+			}
+
+			// RefreshOnly (not RefreshAll) force-refetches exactly these names
+			// while still loading the existing cache, so the other entries are
+			// merged back intact rather than clobbered.
+			summaries := svc.Statuses(ctx, targetNames, resolver,
+				pipeline.StatusOptions{RefreshOnly: refreshSet}, progressPrinter(app))
+			clearProgress(app)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			model.SortSummaries(summaries, model.SortByAccount, model.OrderAsc)
+
+			if app.Format == output.FormatJSON {
+				return output.JSON(os.Stdout, summaries)
+			}
+			output.PipelineTable(os.Stdout, summaries, app.Color())
+			output.PipelineCounts(os.Stderr, summaries)
+			return nil
+		},
+	}
 	return cmd
 }
 
@@ -35,6 +105,8 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		statusFilter []string
 		accountQuery string
 		failOnError  bool
+		sortKey      string
+		sortOrder    string
 	)
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -42,11 +114,21 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		Short:   "List account pipelines with their latest execution status",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			key, err := model.ParseSortKey(sortKey)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			order, err := model.ParseSortOrder(sortOrder)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+
 			summaries, err := fetchSummaries(cmd.Context(), app)
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
 			summaries = filterSummaries(summaries, statusFilter, accountQuery)
+			model.SortSummaries(summaries, key, order)
 
 			if app.Format == output.FormatJSON {
 				if err := output.JSON(os.Stdout, summaries); err != nil {
@@ -55,6 +137,7 @@ func newPipelineListCmd(app *App) *cobra.Command {
 			} else {
 				output.PipelineTable(os.Stdout, summaries, app.Color())
 				output.PipelineCounts(os.Stderr, summaries)
+				output.StatusFreshness(os.Stderr, summaries, app.Cfg.Cache.StatusTTL.D())
 			}
 
 			if failOnError {
@@ -73,7 +156,207 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		"filter by account id or name substring")
 	cmd.Flags().BoolVar(&failOnError, "fail-on-error", false,
 		"exit 1 when any pipeline is Failed or could not be fetched")
+	cmd.Flags().StringVar(&sortKey, "sort", string(model.SortByLastUpdate),
+		"sort by: last-update|status|account")
+	cmd.Flags().StringVar(&sortOrder, "order", string(model.OrderDesc),
+		"sort order: asc|desc")
 	return cmd
+}
+
+// ---- pipeline show ----
+
+func newPipelineShowCmd(app *App) *cobra.Command {
+	var history int32
+	cmd := &cobra.Command{
+		Use:   "show <target>",
+		Short: "Show stage/action state and recent history for one pipeline",
+		Long: `Show the current stage/action state of a single pipeline plus its
+recent execution history.
+
+<target> may be a pipeline name, an account id, or an account name; it must
+resolve to exactly one pipeline.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			name, resolver, err := resolveTarget(ctx, app, args[0])
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			svc, err := app.PipelineService(ctx)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			detail, err := svc.Detail(ctx, name, history, resolver)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+
+			if app.Format == output.FormatJSON {
+				return output.JSON(os.Stdout, detail)
+			}
+			output.PipelineDetailText(os.Stdout, *detail, app.Color())
+			return nil
+		},
+	}
+	cmd.Flags().Int32Var(&history, "history", 5,
+		"number of recent executions to include (0 = none)")
+	return cmd
+}
+
+// resolveTarget maps a single target string to exactly one pipeline name,
+// using the (cache-aware) inventory and account resolver only — it does not
+// fetch statuses. Ambiguous matches are an error so single-target commands
+// never act on the wrong pipeline.
+func resolveTarget(ctx context.Context, app *App, target string) (string, *account.Resolver, error) {
+	svc, err := app.PipelineService(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	names, cachedAt, err := svc.Inventory(ctx, app.Refresh)
+	if err != nil {
+		return "", nil, err
+	}
+	if !cachedAt.IsZero() {
+		output.CacheNote(os.Stderr, "pipeline inventory", cachedAt)
+	}
+	resolver, err := app.Resolver(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	matched := matchSummaries(summariesFromNames(names, resolver), target)
+	switch len(matched) {
+	case 0:
+		return "", nil, fmt.Errorf("no pipeline matches %q", target)
+	case 1:
+		return matched[0].PipelineName, resolver, nil
+	default:
+		var b strings.Builder
+		fmt.Fprintf(&b, "%q matches %d pipelines; be more specific:", target, len(matched))
+		for _, m := range matched {
+			name := m.AccountName
+			if name == "" {
+				name = "-"
+			}
+			fmt.Fprintf(&b, "\n  %s  %s (%s)", m.PipelineName, name, m.AccountID)
+		}
+		return "", nil, fmt.Errorf("%s", b.String())
+	}
+}
+
+// summariesFromNames builds status-free summaries (name + resolved account)
+// for target matching without a status fan-out.
+func summariesFromNames(names []string, resolver *account.Resolver) []model.PipelineSummary {
+	out := make([]model.PipelineSummary, len(names))
+	for i, n := range names {
+		s := model.PipelineSummary{PipelineName: n, AccountID: model.AccountIDFromPipeline(n)}
+		if resolver != nil {
+			if a := resolver.ByID(s.AccountID); a != nil {
+				s.AccountName = a.Name
+			}
+		}
+		out[i] = s
+	}
+	return out
+}
+
+// ---- pipeline logs ----
+
+func newPipelineLogsCmd(app *App) *cobra.Command {
+	var (
+		raw     bool
+		summary bool
+		buildID string
+	)
+	cmd := &cobra.Command{
+		Use:   "logs <target>",
+		Short: "Show the CodeBuild/terraform log of a pipeline's failed action",
+		Long: `Fetch the CloudWatch Logs of an AFT customizations build and print the
+terraform portion.
+
+By default the failed CodeBuild action of <target>'s current state is used;
+pass --build to point at a specific CodeBuild id instead. Output modes:
+terraform section (default), --raw (full log), or --summary (plan verdict
+and error blocks only — the machine-readable boundary).`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if raw && summary {
+				return &ExitError{Code: ExitToolError,
+					Message: "--raw and --summary are mutually exclusive"}
+			}
+
+			if buildID == "" {
+				id, err := failedBuildID(ctx, app, args[0])
+				if err != nil {
+					return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+				}
+				buildID = id
+			}
+
+			svc, err := app.LogsService(ctx)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			bl, err := svc.Fetch(ctx, buildID)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+
+			mode := logs.ModeTerraform
+			switch {
+			case raw:
+				mode = logs.ModeRaw
+			case summary:
+				mode = logs.ModeSummary
+			}
+			lines := logs.Render(bl.Lines, mode)
+
+			if app.Format == output.FormatJSON {
+				return output.JSON(os.Stdout, struct {
+					BuildID string   `json:"build_id"`
+					Group   string   `json:"log_group"`
+					Stream  string   `json:"log_stream"`
+					Lines   []string `json:"lines"`
+				}{bl.BuildID, bl.Group, bl.Stream, lines})
+			}
+			for _, ln := range lines {
+				fmt.Fprintln(os.Stdout, ln)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&raw, "raw", false, "print the full build log unmodified")
+	cmd.Flags().BoolVar(&summary, "summary", false,
+		"print only the plan verdict and terraform error blocks")
+	cmd.Flags().StringVar(&buildID, "build", "",
+		"CodeBuild id to fetch instead of the auto-detected failed action")
+	return cmd
+}
+
+// failedBuildID resolves a target to its current failed CodeBuild action's
+// build id, erroring clearly when there is nothing failed to look at.
+func failedBuildID(ctx context.Context, app *App, target string) (string, error) {
+	name, resolver, err := resolveTarget(ctx, app, target)
+	if err != nil {
+		return "", err
+	}
+	svc, err := app.PipelineService(ctx)
+	if err != nil {
+		return "", err
+	}
+	detail, err := svc.Detail(ctx, name, 0, resolver)
+	if err != nil {
+		return "", err
+	}
+	failed := detail.FailedActions()
+	if len(failed) == 0 {
+		return "", fmt.Errorf(
+			"%s has no failed CodeBuild action; pass --build <id> to fetch a specific build", name)
+	}
+	a := failed[0]
+	fmt.Fprintf(os.Stderr, "using failed action %q (build %s)\n", a.Name, a.CodeBuildID)
+	return a.CodeBuildID, nil
 }
 
 // fetchSummaries is the shared inventory→statuses→join flow.
@@ -95,18 +378,14 @@ func fetchSummaries(ctx context.Context, app *App) ([]model.PipelineSummary, err
 	}
 
 	progress := progressPrinter(app)
-	summaries := svc.Statuses(ctx, names, resolver, progress)
+	summaries := svc.Statuses(ctx, names, resolver, app.statusOptions(), progress)
 	clearProgress(app)
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	sort.Slice(summaries, func(i, j int) bool {
-		if summaries[i].AccountName != summaries[j].AccountName {
-			return summaries[i].AccountName < summaries[j].AccountName
-		}
-		return summaries[i].AccountID < summaries[j].AccountID
-	})
+	// Callers choose the display order (pl list --sort/--order); return in
+	// inventory order (account-id) here.
 	return summaries, nil
 }
 
@@ -186,6 +465,7 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 				fmt.Fprintln(os.Stderr, "no matching targets")
 				return nil
 			}
+			model.SortSummaries(targets, model.SortByAccount, model.OrderAsc)
 
 			// Safety guards (docs/design.md §4.3).
 			limit := app.Cfg.Release.MaxTargets
@@ -229,6 +509,18 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 				SkipInProgress: app.Cfg.Release.SkipInProgress && !includeInProgress,
 			}, progressPrinter(app))
 			clearProgress(app)
+
+			// Drop just-triggered pipelines from the status cache: their
+			// cached terminal status is now stale (they are InProgress).
+			var started []string
+			for _, r := range results {
+				if r.ExecutionID != "" && r.Error == "" {
+					started = append(started, r.PipelineName)
+				}
+			}
+			if err := svc.InvalidateStatuses(started); err != nil {
+				fmt.Fprintln(os.Stderr, "warning: failed to invalidate status cache:", err)
+			}
 
 			if app.Format == output.FormatJSON {
 				if err := output.JSON(os.Stdout, results); err != nil {

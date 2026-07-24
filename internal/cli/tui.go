@@ -8,6 +8,7 @@ import (
 	"github.com/hacker65536/aft-ops/internal/batch"
 	"github.com/hacker65536/aft-ops/internal/core/account"
 	"github.com/hacker65536/aft-ops/internal/core/model"
+	"github.com/hacker65536/aft-ops/internal/core/pipeline"
 	"github.com/hacker65536/aft-ops/internal/tui"
 )
 
@@ -23,9 +24,19 @@ func newTUICmd(app *App) *cobra.Command {
 }
 
 // runTUI wires core services into the TUI. The TUI depends only on the
-// fetch function type, never on AWS clients directly. Note: no stderr
-// cache notes here — stray writes would corrupt the TUI screen.
+// fetch/refresh function types, never on AWS clients directly. Note: no
+// stderr cache notes here — stray writes would corrupt the TUI screen.
 func runTUI(ctx context.Context, app *App) error {
+	// loadResolver is shared by both closures; accounts come from cache
+	// (refresh=false) so a per-row refresh stays cheap.
+	loadResolver := func(ctx context.Context, refresh bool) (*account.Resolver, error) {
+		src, err := app.AccountSource(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return account.Load(ctx, src, app.CacheStore(), app.Cfg.Cache.AccountTTL.D(), refresh)
+	}
+
 	fetch := func(ctx context.Context, refresh bool, onProgress func(batch.Progress)) ([]model.PipelineSummary, error) {
 		svc, err := app.PipelineService(ctx)
 		if err != nil {
@@ -35,22 +46,46 @@ func runTUI(ctx context.Context, app *App) error {
 		if err != nil {
 			return nil, err
 		}
-		src, err := app.AccountSource(ctx)
+		resolver, err := loadResolver(ctx, refresh)
 		if err != nil {
 			return nil, err
 		}
-		resolver, err := account.Load(ctx, src, app.CacheStore(),
-			app.Cfg.Cache.AccountTTL.D(), refresh)
-		if err != nil {
-			return nil, err
+		opts := pipeline.StatusOptions{
+			TTL:             app.Cfg.Cache.StatusTTL.D(),
+			RefreshAll:      refresh,
+			RefreshInFlight: true,
 		}
-		summaries := svc.Statuses(ctx, names, resolver, onProgress)
+		summaries := svc.Statuses(ctx, names, resolver, opts, onProgress)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		return summaries, nil
 	}
-	if err := tui.Run(ctx, fetch); err != nil {
+
+	// refresh force-refetches just the named pipelines (RefreshOnly), merging
+	// them back into the full status cache — the selected-row refresh.
+	refresh := func(ctx context.Context, names []string, onProgress func(batch.Progress)) ([]model.PipelineSummary, error) {
+		svc, err := app.PipelineService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resolver, err := loadResolver(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		only := make(map[string]bool, len(names))
+		for _, n := range names {
+			only[n] = true
+		}
+		summaries := svc.Statuses(ctx, names, resolver,
+			pipeline.StatusOptions{RefreshOnly: only}, onProgress)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return summaries, nil
+	}
+
+	if err := tui.Run(ctx, fetch, refresh); err != nil {
 		return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 	}
 	return nil

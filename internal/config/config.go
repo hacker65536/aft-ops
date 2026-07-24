@@ -69,6 +69,10 @@ type Cache struct {
 	Dir         string   `yaml:"dir"`
 	AccountTTL  Duration `yaml:"account_ttl"`
 	PipelineTTL Duration `yaml:"pipeline_ttl"`
+	// StatusTTL bounds how long a cached execution status is served before a
+	// refetch. In-flight statuses are always refetched regardless (see
+	// pipeline.StatusOptions). 0 disables status caching (always fan out).
+	StatusTTL Duration `yaml:"status_ttl"`
 }
 
 type Release struct {
@@ -101,6 +105,7 @@ func Default() Config {
 			Dir:         DefaultCacheDir(),
 			AccountTTL:  Duration(24 * time.Hour),
 			PipelineTTL: Duration(6 * time.Hour),
+			StatusTTL:   Duration(10 * time.Minute),
 		},
 		Release: Release{
 			MaxTargets:     50,
@@ -182,6 +187,11 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("AFT_OPS_CACHE_DIR"); v != "" {
 		c.Cache.Dir = v
+	}
+	if v := os.Getenv("AFT_OPS_STATUS_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.Cache.StatusTTL = Duration(d)
+		}
 	}
 	if v := os.Getenv("AFT_OPS_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {

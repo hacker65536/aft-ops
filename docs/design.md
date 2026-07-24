@@ -127,14 +127,22 @@ type StageState struct {
 ```
 1. cache から account map / pipeline 一覧を取得（miss なら API → cache 保存）
    - pipeline 一覧: ListPipelines（ページネーション、名前 regex でフィルタ）
-2. Batch Engine で全 pipeline に対し ListPipelineExecutions(maxResults=1) を実行
-   - 最新実行のみ取得。GetPipelineState はステージ詳細が必要な時のみ（詳細画面）
-3. Account 解決を合成して PipelineSummary[] を返す
-4. renderer が table / json で出力
+2. status cache を参照し、TTL 内のエントリはキャッシュから供給。
+   TTL 超・未取得・実行中(InProgress/Stopping)のパイプラインだけ Batch Engine で
+   ListPipelineExecutions(maxResults=1) を再取得（GetPipelineState は詳細画面のみ）
+3. 取得結果を status cache にマージ保存。Account 解決を合成して PipelineSummary[] を返す
+4. renderer が table / json で出力。status の鮮度（refetched/from-cache・最古経過）を stderr に明示
 ```
 
-- 最新実行ステータスは**キャッシュしない**（鮮度が命）。キャッシュ対象は「変更が少ない情報」のみ（account map / pipeline 存在一覧）
-- 一覧の応答目標: 数百件で 10〜20 秒程度（並列度 10、レート制御下）。実測して調整（U2）
+- **最新実行ステータスは per-entry（パイプライン名ごと）で短 TTL キャッシュする**（既定 `status_ttl: 10m`）。
+  短時間の連続 `pl list` で全件 fan-out を避ける。当初の「ステータスは一切キャッシュしない」方針からの
+  意図的な見直し。鮮度は次の 3 点で担保する:
+  - 短い既定 TTL（設定・環境変数で変更可、`0` で無効化＝毎回 fan-out）
+  - **実行中(InProgress/Stopping)エントリは TTL 内でも常に再取得**（変化が速いため）
+  - stderr に鮮度を常時表示。fetch エラー時は既知のキャッシュ値を保持し silent blank を避ける
+- 特定パイプラインだけの再取得は `pipeline refresh <target...>`（該当エントリのみ更新）。
+  `pipeline release` は起動したパイプラインの status cache を無効化し、次回 list で最新化する
+- 一覧の応答目標: 数百件で 10〜20 秒程度（並列度 10、レート制御下）。キャッシュヒット時はほぼ即時。実測して調整（U2）
 
 ### 4.2 詳細確認（F2）
 
@@ -201,7 +209,7 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 |---|---|---|
 | account map（ID⇔名前⇔email） | 下記 7.1 | 24h |
 | pipeline 存在一覧 | ListPipelines | 6h |
-| （実行ステータスはキャッシュしない） | — | — |
+| 実行ステータス（per-entry） | ListPipelineExecutions | 10m（`status_ttl`）。実行中は常に再取得 |
 
 - 保存先: `~/.cache/aft-ops/<org-id or profile>/` （プロファイル毎に分離し、業務/PoC org の取り違えを構造的に防止）
 - 形式: JSON + メタデータ（取得時刻・スキーマバージョン・取得元プロファイル）
@@ -226,10 +234,14 @@ AFT 管理アカウントは Organizations の管理アカウントではない�
 aft-ops                          # 引数なし → TUI 起動
 aft-ops tui                      # 明示的 TUI 起動
 
-aft-ops pipeline list            # F1: 状態一覧（alias: pl ls）
+aft-ops pipeline list            # F1: 状態一覧（alias: pl ls）。status は TTL 内キャッシュ供給
     --status Failed,InProgress   # ステータスフィルタ
     --account <name|id|部分一致>
+    --sort last-update|status|account  # 既定 last-update
+    --order asc|desc             # 既定 desc（未実行=時間なしは常に末尾）
+    --refresh                    # 全 status を強制再取得（inventory/accounts も）
     --watch                      # 定期再取得（簡易ウォッチ）
+aft-ops pipeline refresh <target...>  # 指定パイプラインの status だけ再取得しキャッシュ更新
 aft-ops pipeline show <target>   # F2: 詳細（ステージ/実行履歴）
 aft-ops pipeline logs <target>   # F2: CodeBuild/terraform ログ
     [--execution <id>] [--raw|--summary]
@@ -272,13 +284,17 @@ aft-ops version / completion
 ```
 [Pipeline List]  ──enter──▶  [Pipeline Detail]  ──l──▶  [Log View]
   N rows                       stages / history           terraform log
-  incremental filter (/)       failed action highlight    search, follow
-  status filter (f)
-  sort (s)                     r: release (confirm)
-  r: release selected          
-  space: multi-select
-  R: refresh   q: back/quit
+  / filter                     failed action highlight    search, follow
+  f status filter
+  s sort key / o order         (future) release (confirm)
+  r refresh selected
+  R refresh all                (future) space: multi-select
+  q quit
 ```
+
+- 現状（実装済み）の一覧キー: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
+  (last-update→status→account)・`o` 昇降順トグル・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。
+  既定ソートは last-update 降順（CLI と同一のコア `model.SortSummaries`）。詳細/ログ/multi-select は Phase 2 の続き
 
 - ルートモデルが画面スタックを管理（push/pop）。各画面は独立した `tea.Model`
 - 一覧はロード中も操作可能: キャッシュ済み情報を即表示 → バッチ取得の進捗に応じて行を逐次更新（batch の Progress chan を `tea.Cmd` で購読）
@@ -309,6 +325,7 @@ cache:
   dir: ~/.cache/aft-ops
   account_ttl: 24h
   pipeline_ttl: 6h
+  status_ttl: 10m      # 実行ステータスのキャッシュ TTL（0 で無効化＝毎回 fan-out）
 
 release:
   max_targets: 50

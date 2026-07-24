@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
+	cptypes "github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 
 	"github.com/hacker65536/aft-ops/internal/batch"
 	"github.com/hacker65536/aft-ops/internal/cache"
@@ -20,13 +21,22 @@ import (
 	"github.com/hacker65536/aft-ops/internal/core/model"
 )
 
-const inventoryCacheKey = "pipelines"
+const (
+	inventoryCacheKey = "pipelines"
+	statusCacheKey    = "statuses"
+	// statusEnvelopeTTL is effectively unbounded: the status cache's own
+	// per-entry FetchedAt is authoritative, so the cache envelope must never
+	// self-expire.
+	statusEnvelopeTTL = 100 * 365 * 24 * time.Hour
+)
 
 // API is the subset of the CodePipeline client used by the read side.
 type API interface {
 	codepipeline.ListPipelinesAPIClient
 	ListPipelineExecutions(ctx context.Context, in *codepipeline.ListPipelineExecutionsInput,
 		opts ...func(*codepipeline.Options)) (*codepipeline.ListPipelineExecutionsOutput, error)
+	GetPipelineState(ctx context.Context, in *codepipeline.GetPipelineStateInput,
+		opts ...func(*codepipeline.Options)) (*codepipeline.GetPipelineStateOutput, error)
 }
 
 // StartAPI is the subset used by the write side (may be a client built on
@@ -72,39 +82,117 @@ func (s *Service) Inventory(ctx context.Context, refresh bool) (names []string, 
 	return names, time.Time{}, nil
 }
 
-// Statuses fans out ListPipelineExecutions(max=1) over the given pipelines
-// through the batch engine and joins account names in. Per-item fetch
-// failures are reported in PipelineSummary.FetchError, never dropped.
+// StatusEntry is one pipeline's cached latest execution with the time it was
+// fetched. Statuses are cached per-entry so that a short TTL and targeted
+// refresh both work at pipeline granularity (docs/design.md §4.1).
+type StatusEntry struct {
+	Execution *model.Execution `json:"execution"`
+	FetchedAt time.Time        `json:"fetched_at"`
+}
+
+// StatusOptions controls how Statuses uses the status cache.
+type StatusOptions struct {
+	TTL             time.Duration   // serve a cached entry younger than this
+	RefreshAll      bool            // ignore the cache; refetch every name
+	RefreshOnly     map[string]bool // force-refetch these names
+	RefreshInFlight bool            // always refetch cached in-flight entries
+}
+
+// Statuses returns the latest execution of each pipeline, served from the
+// per-entry status cache when fresh and refetched otherwise. Only the subset
+// that is stale/forced/in-flight hits the API (through the batch engine), so
+// a repeated call within the TTL performs no requests. Per-item fetch
+// failures are reported in PipelineSummary.FetchError unless a cached value
+// can stand in. The merged cache is written back when anything was fetched.
 func (s *Service) Statuses(
 	ctx context.Context,
 	names []string,
 	resolver *account.Resolver,
+	opts StatusOptions,
 	onProgress func(batch.Progress),
 ) []model.PipelineSummary {
-	results := batch.Run(ctx, s.Batch, names,
-		func(ctx context.Context, name string) (*model.Execution, error) {
-			return s.latestExecution(ctx, name)
-		}, onProgress)
+	cached := map[string]StatusEntry{}
+	if !opts.RefreshAll {
+		if m, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, statusEnvelopeTTL); ok {
+			cached = m
+		}
+	}
+
+	now := time.Now()
+	var toFetch []string
+	for _, name := range names {
+		e, ok := cached[name]
+		forced := opts.RefreshAll || opts.RefreshOnly[name]
+		stale := !ok || now.Sub(e.FetchedAt) > opts.TTL
+		inflight := opts.RefreshInFlight && ok && e.Execution != nil && e.Execution.Status.InFlight()
+		if forced || stale || inflight {
+			toFetch = append(toFetch, name)
+		}
+	}
+
+	fetchErrs := map[string]string{}
+	if len(toFetch) > 0 {
+		results := batch.Run(ctx, s.Batch, toFetch,
+			func(ctx context.Context, name string) (*model.Execution, error) {
+				return s.latestExecution(ctx, name)
+			}, onProgress)
+		fetchedAt := time.Now()
+		for i, res := range results {
+			name := toFetch[i]
+			if res.Err != nil {
+				// Retain any prior cached value; only surface an error when
+				// there is nothing to fall back on.
+				if _, ok := cached[name]; !ok {
+					fetchErrs[name] = res.Err.Error()
+				}
+				continue
+			}
+			cached[name] = StatusEntry{Execution: res.Value, FetchedAt: fetchedAt}
+		}
+		if err := cache.Put(s.Cache, statusCacheKey, cached); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: failed to write status cache:", err)
+		}
+	}
 
 	summaries := make([]model.PipelineSummary, len(names))
-	for i, res := range results {
+	for i, name := range names {
 		sum := model.PipelineSummary{
-			PipelineName: names[i],
-			AccountID:    model.AccountIDFromPipeline(names[i]),
+			PipelineName: name,
+			AccountID:    model.AccountIDFromPipeline(name),
 		}
 		if resolver != nil {
 			if a := resolver.ByID(sum.AccountID); a != nil {
 				sum.AccountName = a.Name
 			}
 		}
-		if res.Err != nil {
-			sum.FetchError = res.Err.Error()
-		} else {
-			sum.Latest = res.Value
+		if e, ok := cached[name]; ok {
+			sum.Latest = e.Execution
+			at := e.FetchedAt
+			sum.StatusFetchedAt = &at
+		}
+		if msg, ok := fetchErrs[name]; ok {
+			sum.FetchError = msg
 		}
 		summaries[i] = sum
 	}
 	return summaries
+}
+
+// InvalidateStatuses drops the given pipelines from the status cache so the
+// next Statuses call refetches them. Used after a release, whose targets
+// have just transitioned and whose cached terminal status is now wrong.
+func (s *Service) InvalidateStatuses(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	cached, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, statusEnvelopeTTL)
+	if !ok {
+		return nil // nothing cached yet
+	}
+	for _, name := range names {
+		delete(cached, name)
+	}
+	return cache.Put(s.Cache, statusCacheKey, cached)
 }
 
 func (s *Service) latestExecution(ctx context.Context, name string) (*model.Execution, error) {
@@ -118,14 +206,92 @@ func (s *Service) latestExecution(ctx context.Context, name string) (*model.Exec
 	if len(out.PipelineExecutionSummaries) == 0 {
 		return nil, nil // pipeline exists but never ran
 	}
-	e := out.PipelineExecutionSummaries[0]
-	exec := &model.Execution{
+	exec := executionFromSummary(out.PipelineExecutionSummaries[0])
+	return &exec, nil
+}
+
+// executionFromSummary normalizes an SDK execution summary into the domain
+// model (SDK types must not leak past this package).
+func executionFromSummary(e cptypes.PipelineExecutionSummary) model.Execution {
+	exec := model.Execution{
 		ID:         aws.ToString(e.PipelineExecutionId),
 		Status:     model.ParseStatus(string(e.Status)),
 		StartTime:  e.StartTime,
 		LastUpdate: e.LastUpdateTime,
 	}
-	return exec, nil
+	for _, r := range e.SourceRevisions {
+		exec.Revisions = append(exec.Revisions, model.Revision{
+			ActionName: aws.ToString(r.ActionName),
+			RevisionID: aws.ToString(r.RevisionId),
+			Summary:    aws.ToString(r.RevisionSummary),
+			URL:        aws.ToString(r.RevisionUrl),
+		})
+	}
+	return exec
+}
+
+// Detail returns the current stage/action state of one pipeline plus up to
+// historyN recent executions (historyN <= 0 skips the history call). It is
+// the read side of F2 (docs/design.md §4.2) and supplies the CodeBuild ids
+// that `pipeline logs` follows.
+func (s *Service) Detail(
+	ctx context.Context,
+	name string,
+	historyN int32,
+	resolver *account.Resolver,
+) (*model.PipelineDetail, error) {
+	state, err := s.Read.GetPipelineState(ctx, &codepipeline.GetPipelineStateInput{
+		Name: aws.String(name),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetPipelineState(%s): %w", name, err)
+	}
+
+	d := &model.PipelineDetail{
+		PipelineName: name,
+		AccountID:    model.AccountIDFromPipeline(name),
+	}
+	if resolver != nil {
+		if a := resolver.ByID(d.AccountID); a != nil {
+			d.AccountName = a.Name
+		}
+	}
+	for _, st := range state.StageStates {
+		stage := model.StageState{Name: aws.ToString(st.StageName)}
+		if st.LatestExecution != nil {
+			stage.Status = model.ParseStatus(string(st.LatestExecution.Status))
+		}
+		for _, a := range st.ActionStates {
+			as := model.ActionState{Name: aws.ToString(a.ActionName)}
+			if le := a.LatestExecution; le != nil {
+				as.Status = model.ParseStatus(string(le.Status))
+				as.Summary = aws.ToString(le.Summary)
+				as.CodeBuildID = aws.ToString(le.ExternalExecutionId)
+				as.LogStreamARN = aws.ToString(le.LogStreamARN)
+				as.ExternalURL = aws.ToString(le.ExternalExecutionUrl)
+				as.LastChange = le.LastStatusChange
+				if le.ErrorDetails != nil {
+					as.ErrorMessage = aws.ToString(le.ErrorDetails.Message)
+				}
+			}
+			stage.Actions = append(stage.Actions, as)
+		}
+		d.Stages = append(d.Stages, stage)
+	}
+
+	if historyN > 0 {
+		out, err := s.Read.ListPipelineExecutions(ctx, &codepipeline.ListPipelineExecutionsInput{
+			PipelineName: aws.String(name),
+			MaxResults:   aws.Int32(historyN),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ListPipelineExecutions(%s): %w", name, err)
+		}
+		for _, e := range out.PipelineExecutionSummaries {
+			d.History = append(d.History, executionFromSummary(e))
+		}
+	}
+	return d, nil
 }
 
 // ReleaseRequest is one guarded batch of StartPipelineExecution calls.

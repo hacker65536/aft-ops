@@ -42,19 +42,16 @@ type DynamoSource struct {
 func (s *DynamoSource) Name() string { return "aft-dynamodb(" + s.Table + ")" }
 
 // metadataItem is a tolerant mapping of an aft-request-metadata item.
-// NOTE(D3): verify against the real table on first run; unknown fields are
-// ignored and missing ones degrade gracefully.
+// Schema verified against the live table (D3): the partition key `id` is
+// the 12-digit vended account id, with a flat set of scalar attributes;
+// there is no `vended_account_id` or nested `account_request`. Unknown
+// fields are ignored and missing ones degrade gracefully.
 type metadataItem struct {
-	ID              string `dynamodbav:"id"` // partition key (account email in AFT)
-	Email           string `dynamodbav:"email"`
-	VendedAccountID string `dynamodbav:"vended_account_id"`
-	AccountName     string `dynamodbav:"account_name"`
-	AccountRequest  struct {
-		ControlTowerParameters struct {
-			AccountName  string `dynamodbav:"AccountName"`
-			AccountEmail string `dynamodbav:"AccountEmail"`
-		} `dynamodbav:"control_tower_parameters"`
-	} `dynamodbav:"account_request"`
+	ID                 string `dynamodbav:"id"` // partition key = 12-digit account id
+	Email              string `dynamodbav:"email"`
+	AccountName        string `dynamodbav:"account_name"`
+	CustomizationsName string `dynamodbav:"account_customizations_name"`
+	AccountStatus      string `dynamodbav:"account_status"`
 }
 
 func (s *DynamoSource) Fetch(ctx context.Context) ([]model.Account, error) {
@@ -81,18 +78,12 @@ func (s *DynamoSource) Fetch(ctx context.Context) ([]model.Account, error) {
 
 func (i metadataItem) toAccount() model.Account {
 	acc := model.Account{
-		ID:    i.VendedAccountID,
+		ID:    i.ID,
 		Name:  i.AccountName,
 		Email: i.Email,
 	}
 	if acc.Name == "" {
-		acc.Name = i.AccountRequest.ControlTowerParameters.AccountName
-	}
-	if acc.Email == "" {
-		acc.Email = i.AccountRequest.ControlTowerParameters.AccountEmail
-	}
-	if acc.Email == "" && strings.Contains(i.ID, "@") {
-		acc.Email = i.ID
+		acc.Name = i.CustomizationsName
 	}
 	return acc
 }
