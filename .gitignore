@@ -1,0 +1,17 @@
+# binaries
+/aft-ops
+/dist/
+
+# local config (never commit org-specific values)
+/config.yaml
+*.local.yaml
+
+# private notes / working state kept until the refactor is done (never committed)
+draft_*
+**/draft_*
+.claude/CLAUDE.local.md
+CLAUDE.local.md
+.claude/settings.local.json
+
+# editor/os
+.DS_Store
