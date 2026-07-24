@@ -4,6 +4,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -29,6 +30,18 @@ const (
 // InFlight reports whether the execution is still running.
 func (s Status) InFlight() bool {
 	return s == StatusInProgress || s == StatusStopping
+}
+
+// Terminal reports whether the status is final — the execution's data
+// (its actions, its logs) can no longer change and is safe to cache
+// indefinitely. Unknown is neither in-flight nor terminal.
+func (s Status) Terminal() bool {
+	switch s {
+	case StatusSucceeded, StatusFailed, StatusStopped,
+		StatusSuperseded, StatusCancelled, StatusAbandoned:
+		return true
+	}
+	return false
 }
 
 // ParseStatus normalizes an AWS status string.
@@ -68,6 +81,31 @@ type Revision struct {
 	URL        string `json:"url,omitempty"`
 }
 
+// Message returns the revision's human-readable commit message
+// (UnwrapProviderSummary applied to the revision summary).
+func (r Revision) Message() string {
+	return UnwrapProviderSummary(r.Summary)
+}
+
+// UnwrapProviderSummary returns the human-readable message behind a
+// provider-supplied summary string. CodeConnections sources (e.g. GitHub)
+// deliver both SourceRevision.RevisionSummary and the source action's
+// ExternalExecutionSummary as a JSON string
+// ({"ProviderType":"GitHub","CommitMessage":"..."}); other providers use
+// plain text. The console unwraps the JSON — so do we.
+func UnwrapProviderSummary(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "{") {
+		var j struct {
+			CommitMessage string `json:"CommitMessage"`
+		}
+		if err := json.Unmarshal([]byte(s), &j); err == nil && j.CommitMessage != "" {
+			return strings.TrimSpace(j.CommitMessage)
+		}
+	}
+	return s
+}
+
 // ActionState is one action within a stage.
 type ActionState struct {
 	Name         string     `json:"name"`
@@ -84,6 +122,54 @@ type ActionState struct {
 	// CloudWatch Logs stream (a shortcut for log retrieval).
 	LogStreamARN string `json:"log_stream_arn,omitempty"`
 	ExternalURL  string `json:"external_url,omitempty"`
+}
+
+// ActionExecution is one action's run within a specific pipeline execution
+// (ListActionExecutions), as opposed to ActionState, which is the action's
+// latest state in the pipeline (GetPipelineState).
+type ActionExecution struct {
+	StageName  string     `json:"stage_name"`
+	ActionName string     `json:"action_name"`
+	Status     Status     `json:"status"`
+	StartTime  *time.Time `json:"start_time,omitempty"`
+	LastUpdate *time.Time `json:"last_update,omitempty"`
+	Summary    string     `json:"summary,omitempty"`
+	// ErrorMessage carries the provider's error details for a failed run.
+	ErrorMessage string `json:"error_message,omitempty"`
+	// CodeBuildID is the CodeBuild build id ("<project>:<uuid>") that log
+	// retrieval follows. Empty for non-CodeBuild actions (the adapter strips
+	// source actions' commit SHAs, which share the same SDK field).
+	CodeBuildID  string `json:"codebuild_id,omitempty"`
+	LogStreamARN string `json:"log_stream_arn,omitempty"`
+	ExternalURL  string `json:"external_url,omitempty"`
+}
+
+// Duration is the action run's elapsed time (zero when either end is unknown).
+func (a ActionExecution) Duration() time.Duration {
+	if a.StartTime == nil || a.LastUpdate == nil {
+		return 0
+	}
+	return a.LastUpdate.Sub(*a.StartTime)
+}
+
+// LogAction picks the action whose log an operator most likely wants from
+// one execution's action runs: the first failed action carrying a CodeBuild
+// id, else the last action (in slice order) that has one. Nil when none has
+// a build id. This is the per-execution counterpart of the
+// PipelineDetail-based heuristic used by `pipeline logs`.
+func LogAction(actions []ActionExecution) *ActionExecution {
+	var last *ActionExecution
+	for i := range actions {
+		a := &actions[i]
+		if a.CodeBuildID == "" {
+			continue
+		}
+		if a.Status == StatusFailed {
+			return a
+		}
+		last = a
+	}
+	return last
 }
 
 // StageState is one stage's status and its actions.

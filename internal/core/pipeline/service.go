@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -37,6 +39,8 @@ type API interface {
 		opts ...func(*codepipeline.Options)) (*codepipeline.ListPipelineExecutionsOutput, error)
 	GetPipelineState(ctx context.Context, in *codepipeline.GetPipelineStateInput,
 		opts ...func(*codepipeline.Options)) (*codepipeline.GetPipelineStateOutput, error)
+	ListActionExecutions(ctx context.Context, in *codepipeline.ListActionExecutionsInput,
+		opts ...func(*codepipeline.Options)) (*codepipeline.ListActionExecutionsOutput, error)
 }
 
 // StartAPI is the subset used by the write side (may be a client built on
@@ -47,11 +51,28 @@ type StartAPI interface {
 }
 
 // Service bundles the dependencies of the pipeline operations.
+//
+// The execution-history and action memos below are session-scoped (memory
+// only, never disk): terminal executions' actions are immutable, and the
+// executions list of a mostly-idle AFT pipeline changes rarely, so both are
+// served from memory within their policy (docs/design.md §7).
 type Service struct {
 	Read        API
 	Batch       batch.Config
 	Cache       cache.Store
 	PipelineTTL time.Duration
+	// ExecutionsTTL bounds the executions-history memo; 0 disables it.
+	ExecutionsTTL time.Duration
+
+	mu          sync.Mutex
+	execsMemo   map[string]execsEntry              // by pipeline name
+	actionsMemo map[string][]model.ActionExecution // by name+"\x00"+execID; terminal executions only
+}
+
+// execsEntry is one pipeline's memoized execution history.
+type execsEntry struct {
+	execs     []model.Execution
+	fetchedAt time.Time
 }
 
 // Inventory returns the names of all AFT account pipelines, served from
@@ -266,7 +287,12 @@ func (s *Service) Detail(
 			if le := a.LatestExecution; le != nil {
 				as.Status = model.ParseStatus(string(le.Status))
 				as.Summary = aws.ToString(le.Summary)
-				as.CodeBuildID = aws.ToString(le.ExternalExecutionId)
+				// GetPipelineState carries no action type, so gate on the
+				// id's shape: source actions put a commit SHA here, which
+				// must not be treated as a CodeBuild build id.
+				if id := aws.ToString(le.ExternalExecutionId); isCodeBuildID(id) {
+					as.CodeBuildID = id
+				}
 				as.LogStreamARN = aws.ToString(le.LogStreamARN)
 				as.ExternalURL = aws.ToString(le.ExternalExecutionUrl)
 				as.LastChange = le.LastStatusChange
@@ -292,6 +318,145 @@ func (s *Service) Detail(
 		}
 	}
 	return d, nil
+}
+
+// Executions returns up to maxN recent executions of one pipeline, newest
+// first (a single ListPipelineExecutions page; maxN is capped by the API at
+// 100, plenty for the TUI's drill-down). The history is served from the
+// session memo within ExecutionsTTL unless refresh forces a refetch or the
+// memoized head execution is in-flight (a running pipeline moves fast, an
+// idle one not at all).
+func (s *Service) Executions(ctx context.Context, name string, maxN int32, refresh bool) ([]model.Execution, error) {
+	if !refresh {
+		s.mu.Lock()
+		e, ok := s.execsMemo[name]
+		s.mu.Unlock()
+		if ok && time.Since(e.fetchedAt) <= s.ExecutionsTTL &&
+			!(len(e.execs) > 0 && e.execs[0].Status.InFlight()) {
+			return e.execs, nil
+		}
+	}
+
+	out, err := s.Read.ListPipelineExecutions(ctx, &codepipeline.ListPipelineExecutionsInput{
+		PipelineName: aws.String(name),
+		MaxResults:   aws.Int32(maxN),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ListPipelineExecutions(%s): %w", name, err)
+	}
+	execs := make([]model.Execution, 0, len(out.PipelineExecutionSummaries))
+	for _, e := range out.PipelineExecutionSummaries {
+		execs = append(execs, executionFromSummary(e))
+	}
+	if s.ExecutionsTTL > 0 {
+		s.mu.Lock()
+		if s.execsMemo == nil {
+			s.execsMemo = map[string]execsEntry{}
+		}
+		s.execsMemo[name] = execsEntry{execs: execs, fetchedAt: time.Now()}
+		s.mu.Unlock()
+	}
+	return execs, nil
+}
+
+// ActionExecutions returns the per-action run details of one pipeline
+// execution. The API yields newest-first; the result is normalized to
+// chronological (stage) order so it reads top-to-bottom like the pipeline
+// and model.LogAction's "last build" pick lands on the final action.
+// done marks the execution as terminal: its actions are then immutable and
+// memoized for the session, while an in-flight execution refetches every
+// time (its actions are still progressing).
+func (s *Service) ActionExecutions(ctx context.Context, name, execID string, done bool) ([]model.ActionExecution, error) {
+	key := name + "\x00" + execID
+	if done {
+		s.mu.Lock()
+		memo, ok := s.actionsMemo[key]
+		s.mu.Unlock()
+		if ok {
+			return memo, nil
+		}
+	}
+
+	var actions []model.ActionExecution
+	in := &codepipeline.ListActionExecutionsInput{
+		PipelineName: aws.String(name),
+		Filter:       &cptypes.ActionExecutionFilter{PipelineExecutionId: aws.String(execID)},
+	}
+	for {
+		out, err := s.Read.ListActionExecutions(ctx, in)
+		if err != nil {
+			return nil, fmt.Errorf("ListActionExecutions(%s): %w", name, err)
+		}
+		for _, d := range out.ActionExecutionDetails {
+			actions = append(actions, actionExecutionFromDetail(d))
+		}
+		if out.NextToken == nil {
+			break
+		}
+		in.NextToken = out.NextToken
+	}
+	sort.SliceStable(actions, func(i, j int) bool {
+		a, b := actions[i].StartTime, actions[j].StartTime
+		if a == nil || b == nil {
+			return b == nil && a != nil // unknown start sinks last
+		}
+		return a.Before(*b)
+	})
+	if done {
+		s.mu.Lock()
+		if s.actionsMemo == nil {
+			s.actionsMemo = map[string][]model.ActionExecution{}
+		}
+		s.actionsMemo[key] = actions
+		s.mu.Unlock()
+	}
+	return actions, nil
+}
+
+// actionExecutionFromDetail normalizes an SDK action execution detail into
+// the domain model (SDK types must not leak past this package). The
+// external execution id is only kept as CodeBuildID for CodeBuild actions —
+// source actions carry a commit SHA there, which must not be fed to
+// BatchGetBuilds.
+func actionExecutionFromDetail(d cptypes.ActionExecutionDetail) model.ActionExecution {
+	a := model.ActionExecution{
+		StageName:  aws.ToString(d.StageName),
+		ActionName: aws.ToString(d.ActionName),
+		Status:     model.ParseStatus(string(d.Status)),
+		StartTime:  d.StartTime,
+		LastUpdate: d.LastUpdateTime,
+	}
+	provider := ""
+	if d.Input != nil && d.Input.ActionTypeId != nil {
+		provider = aws.ToString(d.Input.ActionTypeId.Provider)
+	}
+	if out := d.Output; out != nil && out.ExecutionResult != nil {
+		r := out.ExecutionResult
+		// Source actions carry the CodeConnections JSON here — unwrap it to
+		// the commit message, like the executions screen does.
+		a.Summary = model.UnwrapProviderSummary(aws.ToString(r.ExternalExecutionSummary))
+		a.LogStreamARN = aws.ToString(r.LogStreamARN)
+		a.ExternalURL = aws.ToString(r.ExternalExecutionUrl)
+		if r.ErrorDetails != nil {
+			a.ErrorMessage = aws.ToString(r.ErrorDetails.Message)
+		}
+		id := aws.ToString(r.ExternalExecutionId)
+		switch {
+		case provider == "CodeBuild":
+			a.CodeBuildID = id
+		case provider == "" && isCodeBuildID(id):
+			// No type info — fall back to the id's shape.
+			a.CodeBuildID = id
+		}
+	}
+	return a
+}
+
+// isCodeBuildID reports whether an external execution id has the CodeBuild
+// build-id shape ("<project>:<uuid>"). Source revisions are bare commit
+// SHAs and never contain a colon.
+func isCodeBuildID(id string) bool {
+	return strings.Contains(id, ":")
 }
 
 // ReleaseRequest is one guarded batch of StartPipelineExecution calls.

@@ -73,6 +73,12 @@ type Cache struct {
 	// refetch. In-flight statuses are always refetched regardless (see
 	// pipeline.StatusOptions). 0 disables status caching (always fan out).
 	StatusTTL Duration `yaml:"status_ttl"`
+	// ExecutionsTTL bounds how long one pipeline's cached execution history
+	// (the TUI executions screen) is served before a refetch. A history whose
+	// head execution is in-flight is always refetched, and the screen's r key
+	// forces one. AFT pipelines are mostly idle, so a generous TTL saves
+	// round-trips without staleness in practice. 0 disables the memo.
+	ExecutionsTTL Duration `yaml:"executions_ttl"`
 }
 
 type Release struct {
@@ -102,10 +108,11 @@ func Default() Config {
 			ChunkPause:  0,
 		},
 		Cache: Cache{
-			Dir:         DefaultCacheDir(),
-			AccountTTL:  Duration(24 * time.Hour),
-			PipelineTTL: Duration(6 * time.Hour),
-			StatusTTL:   Duration(10 * time.Minute),
+			Dir:           DefaultCacheDir(),
+			AccountTTL:    Duration(24 * time.Hour),
+			PipelineTTL:   Duration(6 * time.Hour),
+			StatusTTL:     Duration(10 * time.Minute),
+			ExecutionsTTL: Duration(15 * time.Minute),
 		},
 		Release: Release{
 			MaxTargets:     50,

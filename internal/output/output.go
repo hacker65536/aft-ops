@@ -262,8 +262,8 @@ func revisionSummary(revs []model.Revision) string {
 		return "-"
 	}
 	r := revs[0]
-	if r.Summary != "" {
-		return truncate(strings.TrimSpace(r.Summary), 40)
+	if msg := r.Message(); msg != "" {
+		return truncate(msg, 40)
 	}
 	return shortID(r.RevisionID)
 }

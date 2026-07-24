@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -101,5 +102,14 @@ func TestRefreshedMsgMergesInPlace(t *testing.T) {
 	}
 	if got != model.StatusInProgress {
 		t.Errorf("selected row status = %q, want InProgress after merge", got)
+	}
+}
+
+// navDots renders one dot per drill-down level regardless of the active one.
+func TestNavDots(t *testing.T) {
+	for depth := 1; depth <= navDepth; depth++ {
+		if got := strings.Count(navDots(depth), "•"); got != navDepth {
+			t.Errorf("navDots(%d) has %d dots, want %d", depth, got, navDepth)
+		}
 	}
 }

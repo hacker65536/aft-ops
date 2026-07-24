@@ -31,6 +31,29 @@ go build -o aft-ops ./cmd/aft-ops
 ./aft-ops metrics show
 ```
 
+## TUI
+
+`aft-ops tui` follows the CodePipeline data model down four screens:
+
+```
+Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
+```
+
+- vim-style navigation: `h` back · `l`/`enter` drill in · `j`/`k` move · `g`/`G` top/bottom.
+  A header dots indicator (`••••`) shows the current depth
+- `v` from any level jumps straight to the most relevant log — the failed
+  action's, else the last build's
+- Log view renders the terraform portion by default (`m` cycles
+  terraform / raw / summary) and supports less-style search: `/` to search,
+  `n`/`N` for next/previous match
+- Actions show each action's terraform verdict (`Apply complete! ...` /
+  `Error: ...`) fetched lazily from its build log, with plan-colored counts
+- `space` multi-select + `x` triggers batch Release change (guarded by
+  `release.max_targets`)
+- Immutable data (completed builds' logs, finished executions' actions) is
+  cached in-session; execution history is served within
+  `cache.executions_ttl` (default 15m) — `r`/`R` force a refresh
+
 ## Configuration
 
 `~/.config/aft-ops/config.yaml` (all keys optional; flags > `AFT_OPS_*` env > file > defaults):

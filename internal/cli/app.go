@@ -35,6 +35,8 @@ type App struct {
 	rec      *metrics.Recorder
 	readCfg  *aws.Config
 	writeCfg *aws.Config
+	logsSvc  *logs.Service
+	pipeSvc  *pipeline.Service
 }
 
 // Color reports whether stdout table output should be colorized.
@@ -120,30 +122,42 @@ func (a *App) statusOptions() pipeline.StatusOptions {
 	}
 }
 
-// PipelineService builds the read-side pipeline service.
+// PipelineService builds the read-side pipeline service (lazy, cached — the
+// instance carries the session-scoped executions/actions memos).
 func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
+	if a.pipeSvc != nil {
+		return a.pipeSvc, nil
+	}
 	cfg, err := a.ReadAWS(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &pipeline.Service{
-		Read:        codepipeline.NewFromConfig(cfg),
-		Batch:       a.BatchConfig(),
-		Cache:       a.CacheStore(),
-		PipelineTTL: a.Cfg.Cache.PipelineTTL.D(),
-	}, nil
+	a.pipeSvc = &pipeline.Service{
+		Read:          codepipeline.NewFromConfig(cfg),
+		Batch:         a.BatchConfig(),
+		Cache:         a.CacheStore(),
+		PipelineTTL:   a.Cfg.Cache.PipelineTTL.D(),
+		ExecutionsTTL: a.Cfg.Cache.ExecutionsTTL.D(),
+	}
+	return a.pipeSvc, nil
 }
 
-// LogsService builds the read-side CodeBuild + CloudWatch Logs service.
+// LogsService builds the read-side CodeBuild + CloudWatch Logs service
+// (lazy, cached — the instance carries the session-scoped memo of completed
+// builds' logs, so the TUI revisiting a log performs no requests).
 func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
+	if a.logsSvc != nil {
+		return a.logsSvc, nil
+	}
 	cfg, err := a.ReadAWS(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &logs.Service{
+	a.logsSvc = &logs.Service{
 		CodeBuild: codebuild.NewFromConfig(cfg),
 		Logs:      cloudwatchlogs.NewFromConfig(cfg),
-	}, nil
+	}
+	return a.logsSvc, nil
 }
 
 // StartClient builds the write-side CodePipeline client.

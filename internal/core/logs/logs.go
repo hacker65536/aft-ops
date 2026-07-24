@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -29,9 +30,17 @@ type LogsAPI interface {
 }
 
 // Service resolves a CodeBuild id to its log stream and fetches it.
+// Completed builds' logs are memoized in memory for the Service's lifetime
+// (a build's log is immutable once the build finishes), so revisiting the
+// same log within a TUI session performs no requests. Nothing is persisted
+// to disk — the on-disk cache stays limited to accounts and the pipeline
+// inventory (docs/design.md §4.1).
 type Service struct {
 	CodeBuild CodeBuildAPI
 	Logs      LogsAPI
+
+	mu   sync.Mutex
+	memo map[string]*BuildLog // by build id; completed builds only
 }
 
 // BuildLog is a fetched build log with its CloudWatch location.
@@ -43,8 +52,17 @@ type BuildLog struct {
 }
 
 // Fetch resolves buildID (a CodeBuild build id, "<project>:<uuid>") to its
-// CloudWatch Logs stream and returns every log line in order.
+// CloudWatch Logs stream and returns every log line in order. A completed
+// build is served from the in-memory memo on repeat calls; an in-flight
+// build is always refetched (its log is still growing).
 func (s *Service) Fetch(ctx context.Context, buildID string) (*BuildLog, error) {
+	s.mu.Lock()
+	if bl, ok := s.memo[buildID]; ok {
+		s.mu.Unlock()
+		return bl, nil
+	}
+	s.mu.Unlock()
+
 	out, err := s.CodeBuild.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{
 		Ids: []string{buildID},
 	})
@@ -54,7 +72,8 @@ func (s *Service) Fetch(ctx context.Context, buildID string) (*BuildLog, error) 
 	if len(out.Builds) == 0 {
 		return nil, fmt.Errorf("build %q not found", buildID)
 	}
-	loc := out.Builds[0].Logs
+	build := out.Builds[0]
+	loc := build.Logs
 	if loc == nil || loc.GroupName == nil || loc.StreamName == nil {
 		return nil, fmt.Errorf("build %q has no CloudWatch Logs location", buildID)
 	}
@@ -63,7 +82,16 @@ func (s *Service) Fetch(ctx context.Context, buildID string) (*BuildLog, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &BuildLog{BuildID: buildID, Group: group, Stream: stream, Lines: lines}, nil
+	bl := &BuildLog{BuildID: buildID, Group: group, Stream: stream, Lines: lines}
+	if build.BuildComplete {
+		s.mu.Lock()
+		if s.memo == nil {
+			s.memo = map[string]*BuildLog{}
+		}
+		s.memo[buildID] = bl
+		s.mu.Unlock()
+	}
+	return bl, nil
 }
 
 // fetchStream pages GetLogEvents from the head until the forward token stops
@@ -118,30 +146,95 @@ func Render(lines []string, mode Mode) []string {
 	}
 }
 
-// tfStartRe marks where terraform output begins inside the CodeBuild log
-// (init/plan/apply banners). The first match wins.
+// tfStartRe marks where terraform output begins inside the CodeBuild log:
+// the first `terraform init` banner (modules are initialized before the
+// backend when present), with later-stage banners as fallbacks. The first
+// match wins.
+//
+// The version banner ("Terraform v...") is deliberately NOT a marker: the
+// AFT buildspec runs `terraform --version` and then dumps every *.tf file
+// (`for f in *.tf; do cat $f; done`) BEFORE `terraform init`, so matching
+// the version line would pull that whole dump in as noise.
 var tfStartRe = regexp.MustCompile(
-	`Initializing the backend|Initializing provider plugins|` +
+	`Initializing modules|Initializing the backend|Initializing provider plugins|` +
 		`Terraform has been successfully initialized|` +
 		`Terraform will perform the following actions|` +
-		`Terraform used the selected providers|^Terraform v`)
+		`Terraform used the selected providers`)
 
-// ExtractTerraform returns the log from the first terraform marker to the
-// end. When no marker is present it returns every line, so the caller never
-// sees an empty result by accident (fall back to raw).
+// containerLineRe matches the CodeBuild agent's own log lines. Terraform
+// never emits these mid-run, so the first one after the terraform start
+// marker signals that the build phase (and the terraform output) is over —
+// everything from there on is POST_BUILD noise.
+var containerLineRe = regexp.MustCompile(`^\[Container\] `)
+
+// ExtractTerraform returns the log from the first terraform marker up to
+// (not including) the next CodeBuild agent line, dropping both the setup
+// preamble and the POST_BUILD tail. When no marker is present it returns
+// every line, so the caller never sees an empty result by accident (fall
+// back to raw).
 func ExtractTerraform(lines []string) []string {
+	start := -1
 	for i, ln := range lines {
 		if tfStartRe.MatchString(strings.TrimSpace(ln)) {
-			return lines[i:]
+			start = i
+			break
 		}
 	}
-	return lines
+	if start < 0 {
+		return lines
+	}
+	out := lines[start:]
+	for i, ln := range out {
+		if containerLineRe.MatchString(ln) {
+			out = out[:i]
+			break
+		}
+	}
+	// Drop trailing blank lines left by the cut.
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 // summaryHeadRe matches the terraform lines an operator or AI cares about
 // most: the plan/apply verdict and error/warning headers.
 var summaryHeadRe = regexp.MustCompile(
 	`^(Plan:|Apply complete!|Destroy complete!|No changes\.|Error:|Warning:)`)
+
+// Verdict returns the single line that best concludes a terraform run: the
+// first error header when the run failed, else the final apply/destroy
+// verdict, else the plan verdict. Empty when the log carries none (e.g. a
+// build that died before terraform ran). It feeds one-line summaries such
+// as the TUI actions screen.
+func Verdict(lines []string) string {
+	var errLine, applyLine, planLine string
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		// Terraform boxes diagnostics ("│ Error: ..."); unwrap the border so
+		// the prefix checks below see the header itself.
+		t = strings.TrimSpace(strings.TrimPrefix(t, "│"))
+		switch {
+		case strings.HasPrefix(t, "Error:"):
+			if errLine == "" {
+				errLine = t
+			}
+		case strings.HasPrefix(t, "Apply complete!"),
+			strings.HasPrefix(t, "Destroy complete!"),
+			strings.HasPrefix(t, "No changes."):
+			applyLine = t
+		case strings.HasPrefix(t, "Plan:"):
+			planLine = t
+		}
+	}
+	switch {
+	case errLine != "":
+		return errLine
+	case applyLine != "":
+		return applyLine
+	}
+	return planLine
+}
 
 // Summarize returns the plan-result verdict and the terraform error blocks
 // (the boxed `╷ │ ╵` diagnostics), dropping the routine output. This is the

@@ -21,8 +21,10 @@ customizations パイプライン（数百件規模）の状態確認・Release 
 - **AWS SDK の型を core の公開 API に露出させない**（`internal/core/model` に正規化）
 - **出力境界**: stdout=データ / stderr=進捗・診断。JSON は `schema_version` 付き。
   exit code: 0=正常 / 1=ドメイン失敗 / 2=ツールエラー / 130=中断
-- **実行ステータスはキャッシュしない**（鮮度優先）。キャッシュはアカウント map と
-  パイプライン存在一覧のみ。キャッシュはプロファイル毎にディレクトリ分離
+- **キャッシュ原則: 終端状態のデータ（完了 build のログ・終端 execution のアクション）は
+  不変なので積極的にキャッシュし、in-flight のものだけ常に再取得する**。可変な一覧系は
+  TTL + 明示 refresh で制御（詳細は design.md §7）。ディスクキャッシュはプロファイル毎に
+  ディレクトリ分離
 - 設定は YAML 単一フォーマット・自前マージ（viper 不採用）。優先順位: flag > env(AFT_OPS_*) > file > default
 - コード・コメント・CLI ヘルプは英語（OSS 前提）
 

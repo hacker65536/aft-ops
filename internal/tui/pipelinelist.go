@@ -52,6 +52,8 @@ type uiModel struct {
 	fetch        Fetch
 	refresh      Refresh
 	detail       DetailFunc
+	execsFn      ExecutionsFunc
+	actionsFn    ActionsFunc
 	logs         LogsFunc
 	release      ReleaseFunc
 	releaseLimit int
@@ -111,8 +113,9 @@ func newModel(ctx context.Context, d Deps) uiModel {
 	t.SetStyles(st)
 
 	return uiModel{
-		ctx: ctx,
+		ctx:   ctx,
 		fetch: d.Fetch, refresh: d.Refresh, detail: d.Detail,
+		execsFn: d.Executions, actionsFn: d.Actions,
 		logs: d.Logs, release: d.Release, releaseLimit: d.ReleaseLimit,
 		table: t, filter: ti, spin: sp,
 		selected: map[string]bool{},
@@ -240,6 +243,15 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		m.table.SetCursor(cur) // keep the operator's place
 		return m, nil
 
+	case fastLogMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		lm := *msg.lm
+		return m, func() tea.Msg { return pushMsg{s: lm} }
+
 	case refreshNamesMsg:
 		for _, n := range msg.names {
 			delete(m.selected, n)
@@ -309,8 +321,17 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 		m.resort()
 		m.table.SetCursor(cur)
 		return m, nil
-	case "enter":
-		return m, m.openDetail()
+	case "l", "enter":
+		return m, m.openExecutions()
+	case "v":
+		if m.loading {
+			return m, nil
+		}
+		if cmd := m.openFastLog(); cmd != nil {
+			m.loading = true
+			return m, tea.Batch(cmd, m.spin.Tick)
+		}
+		return m, nil
 	case " ", "space":
 		cur := m.table.Cursor()
 		if cur < 0 || cur >= len(m.visible) {
@@ -348,10 +369,11 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 	return m, cmd
 }
 
-// openDetail pushes the detail screen for the selected row. It is a no-op
-// when nothing is selected or no DetailFunc was wired (e.g. unit tests).
-func (m uiModel) openDetail() tea.Cmd {
-	if m.detail == nil {
+// openExecutions pushes the execution history screen for the selected row.
+// It is a no-op when nothing is selected or no ExecutionsFunc was wired
+// (e.g. unit tests).
+func (m uiModel) openExecutions() tea.Cmd {
+	if m.execsFn == nil {
 		return nil
 	}
 	cur := m.table.Cursor()
@@ -359,8 +381,55 @@ func (m uiModel) openDetail() tea.Cmd {
 		return nil
 	}
 	sel := m.visible[cur]
-	d := newDetailModel(m.ctx, m.detail, m.logs, sel.PipelineName, sel.AccountName, m.width, m.height)
-	return func() tea.Msg { return pushMsg{s: d} }
+	em := newExecsModel(m.ctx, m.execsFn, m.actionsFn, m.logs,
+		sel.PipelineName, sel.AccountName, m.width, m.height)
+	return func() tea.Msg { return pushMsg{s: em} }
+}
+
+// openFastLog resolves the selected pipeline's most relevant build — its
+// failed action, else the last action carrying a build id — with a single
+// GetPipelineState call and pushes the log screen directly. This is the v
+// shortcut for the everyday case ("it failed, show me the terraform log")
+// without walking executions → actions.
+func (m uiModel) openFastLog() tea.Cmd {
+	if m.detail == nil || m.logs == nil {
+		return nil
+	}
+	cur := m.table.Cursor()
+	if cur < 0 || cur >= len(m.visible) {
+		return nil
+	}
+	sel := m.visible[cur]
+	ctx, detail, logs := m.ctx, m.detail, m.logs
+	w, h := m.width, m.height
+	return func() tea.Msg {
+		d, err := detail(ctx, sel.PipelineName)
+		if err != nil {
+			return fastLogMsg{err: err}
+		}
+		id, action := logBuildID(d)
+		if id == "" {
+			return fastLogMsg{err: fmt.Errorf("no CodeBuild log found for %s", sel.PipelineName)}
+		}
+		lm := newLogModel(ctx, logs, id, action, w, h)
+		return fastLogMsg{lm: &lm}
+	}
+}
+
+// logBuildID picks the CodeBuild action to show logs for: the first failed
+// action, otherwise the last action across stages that has a build id.
+func logBuildID(d *model.PipelineDetail) (id, action string) {
+	if fa := d.FailedActions(); len(fa) > 0 {
+		return fa[0].CodeBuildID, fa[0].Name
+	}
+	for _, st := range d.Stages {
+		for _, a := range st.Actions {
+			if a.CodeBuildID != "" {
+				id, action = a.CodeBuildID, a.Name
+			}
+		}
+	}
+	return id, action
 }
 
 // openRelease pushes the release confirm/run screen for the selected rows.
@@ -455,15 +524,16 @@ func (m *uiModel) applyFilter() {
 }
 
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true)
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	titleStyle     = lipgloss.NewStyle().Bold(true)
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	activeDotStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 )
 
 func (m uiModel) View() string {
 	var b strings.Builder
 
-	header := titleStyle.Render("aft-ops — account pipelines")
+	header := navDots(1) + " " + titleStyle.Render("aft-ops — account pipelines")
 	if want := statusCycle[m.statusIdx]; want != "" {
 		header += dimStyle.Render("  [status: " + string(want) + "]")
 	}
@@ -472,8 +542,12 @@ func (m uiModel) View() string {
 		header += titleStyle.Render(fmt.Sprintf("  [%d selected]", n))
 	}
 	if m.loading {
-		header += "  " + m.spin.View() +
-			fmt.Sprintf(" fetching %d/%d", m.progress.Done, m.progress.Total)
+		header += "  " + m.spin.View()
+		if m.progress.Total > 0 {
+			header += fmt.Sprintf(" fetching %d/%d", m.progress.Done, m.progress.Total)
+		} else {
+			header += dimStyle.Render(" loading…")
+		}
 	} else {
 		header += dimStyle.Render(fmt.Sprintf("  %d shown / %d total", len(m.table.Rows()), len(m.items)))
 	}
@@ -486,7 +560,7 @@ func (m uiModel) View() string {
 		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")
 	}
 	b.WriteString(m.table.View() + "\n")
-	b.WriteString(dimStyle.Render("q quit · / filter · f status · s sort · o order · enter details · space select · x release · r/R refresh"))
+	b.WriteString(dimStyle.Render("q quit · / filter · f status · s sort · o order · l/enter executions · v log · space select · x release · r/R refresh"))
 	return b.String()
 }
 

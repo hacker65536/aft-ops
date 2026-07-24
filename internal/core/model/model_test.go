@@ -81,3 +81,24 @@ func TestSortByStatus(t *testing.T) {
 	// alphabetical: Failed < InProgress < Succeeded
 	eq(t, names(items), []string{"f", "i", "s"})
 }
+
+// Message unwraps the CodeConnections JSON RevisionSummary and falls back
+// to plain text (or empty) otherwise.
+func TestRevisionMessage(t *testing.T) {
+	cases := []struct {
+		name, summary, want string
+	}{
+		{"codeconnections json",
+			`{"ProviderType":"GitHub","CommitMessage":"Merge pull request #801 from C-FO/x"}`,
+			"Merge pull request #801 from C-FO/x"},
+		{"plain text", "fix vpc", "fix vpc"},
+		{"json without CommitMessage stays raw", `{"ProviderType":"GitHub"}`, `{"ProviderType":"GitHub"}`},
+		{"invalid json stays raw", "{not json", "{not json"},
+		{"empty", "", ""},
+	}
+	for _, c := range cases {
+		if got := (Revision{Summary: c.summary}).Message(); got != c.want {
+			t.Errorf("%s: Message() = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

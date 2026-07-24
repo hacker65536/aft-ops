@@ -33,34 +33,30 @@ func TestLogBuildIDPicksFailedAction(t *testing.T) {
 	}
 }
 
-// Pressing l on a loaded detail with a failed build pushes the log screen.
-func TestDetailKeyLPushesLog(t *testing.T) {
-	m := newDetailModel(context.Background(), nil,
-		func(context.Context, string) ([]string, error) { return nil, nil },
-		"111111111111-customizations-pipeline", "alpha", 80, 24)
-	loaded, _ := m.Update(detailLoadedMsg{d: failedDetail()})
-	m = loaded.(detailModel)
+// A successful fastLogMsg on the list pushes the resolved log screen; a
+// failed one surfaces the error inline.
+func TestFastLogMsgOnList(t *testing.T) {
+	m := testModel(t, nil)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	lm := newLogModel(context.Background(), nil, "proj:uuid", "terraform-apply", 80, 24)
+	next, cmd := m.Update(fastLogMsg{lm: &lm})
+	if next.(uiModel).loading {
+		t.Error("fastLogMsg should clear loading")
+	}
 	if cmd == nil {
-		t.Fatal("l on a detail with a failed build should return a command")
+		t.Fatal("a resolved fast log should return a push command")
 	}
 	push, ok := cmd().(pushMsg)
 	if !ok {
-		t.Fatalf("l should emit pushMsg, got %T", cmd())
+		t.Fatalf("fastLogMsg should emit pushMsg, got %T", cmd())
 	}
-	if lm, ok := push.s.(logModel); !ok || lm.buildID != "proj:uuid" {
+	if got, ok := push.s.(logModel); !ok || got.buildID != "proj:uuid" {
 		t.Errorf("pushed screen should be a logModel for proj:uuid, got %T", push.s)
 	}
-}
 
-// l is a no-op when no LogsFunc is wired.
-func TestDetailKeyLNoLogsIsNoop(t *testing.T) {
-	m := newDetailModel(context.Background(), nil, nil, "p", "alpha", 80, 24)
-	loaded, _ := m.Update(detailLoadedMsg{d: failedDetail()})
-	m = loaded.(detailModel)
-	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}); cmd != nil {
-		t.Error("l without a LogsFunc should be a no-op")
+	next, _ = m.Update(fastLogMsg{err: errors.New("no build")})
+	if next.(uiModel).err == nil {
+		t.Error("a failed fast log should record the error")
 	}
 }
 
@@ -113,5 +109,116 @@ func TestLogQuitPops(t *testing.T) {
 	}
 	if _, ok := cmd().(popMsg); !ok {
 		t.Errorf("esc should emit popMsg, got %T", cmd())
+	}
+}
+
+func typeRunes(t *testing.T, m logModel, s string) logModel {
+	t.Helper()
+	for _, r := range s {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(logModel)
+	}
+	return m
+}
+
+// / opens the search input, enter commits it, and matching is a
+// case-insensitive substring test; n/N walk the matches with wraparound.
+func TestLogSearch(t *testing.T) {
+	// Height 6 → a 3-line viewport, so jumping to a match actually scrolls
+	// (a viewport that already shows everything clamps SetYOffset to 0).
+	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 6)
+	raw := []string{"alpha", "Error: one", "beta", "ERROR: two", "gamma"}
+	next, _ := m.Update(logLoadedMsg{lines: raw})
+	m = next.(logModel)
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = next.(logModel)
+	if !m.searching {
+		t.Fatal("/ should focus the search input")
+	}
+	m = typeRunes(t, m, "error")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(logModel)
+
+	if m.searching {
+		t.Error("enter should leave search input mode")
+	}
+	if len(m.matches) != 2 || m.matches[0] != 1 || m.matches[1] != 3 {
+		t.Fatalf("matches = %v, want [1 3] (case-insensitive)", m.matches)
+	}
+	if m.matchIdx != 0 || m.vp.YOffset != 1 {
+		t.Errorf("first match: idx=%d yoffset=%d, want 0/1", m.matchIdx, m.vp.YOffset)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = next.(logModel)
+	if m.matchIdx != 1 {
+		t.Errorf("after n, matchIdx = %d, want 1", m.matchIdx)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = next.(logModel)
+	if m.matchIdx != 0 {
+		t.Errorf("n should wrap around, matchIdx = %d, want 0", m.matchIdx)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m = next.(logModel)
+	if m.matchIdx != 1 {
+		t.Errorf("N should step back with wraparound, matchIdx = %d, want 1", m.matchIdx)
+	}
+}
+
+// esc clears an active search first and only pops on the next press; h/q
+// pop regardless.
+func TestLogEscClearsSearchThenPops(t *testing.T) {
+	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 24)
+	next, _ := m.Update(logLoadedMsg{lines: []string{"alpha", "beta"}})
+	m = next.(logModel)
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = next.(logModel)
+	m = typeRunes(t, m, "beta")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(logModel)
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(logModel)
+	if cmd != nil {
+		t.Error("esc with an active search should clear it, not pop")
+	}
+	if m.query != "" || m.matches != nil {
+		t.Error("esc should clear the query and matches")
+	}
+
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("second esc should pop")
+	}
+	if _, ok := cmd().(popMsg); !ok {
+		t.Errorf("second esc should emit popMsg, got %T", cmd())
+	}
+}
+
+// Switching modes re-runs the search against the new rendering.
+func TestLogSearchSurvivesModeSwitch(t *testing.T) {
+	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 24)
+	raw := []string{"[Container] setup", "Terraform will perform the following actions", "Error: boom"}
+	next, _ := m.Update(logLoadedMsg{lines: raw})
+	m = next.(logModel)
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = next.(logModel)
+	m = typeRunes(t, m, "container")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(logModel)
+	// terraform mode drops the pre-terraform line, so no match yet.
+	if len(m.matches) != 0 {
+		t.Fatalf("terraform mode should have 0 matches, got %v", m.matches)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = next.(logModel)
+	// raw mode restores the line; the query must re-match line 0.
+	if len(m.matches) != 1 || m.matches[0] != 0 {
+		t.Errorf("raw mode matches = %v, want [0]", m.matches)
 	}
 }

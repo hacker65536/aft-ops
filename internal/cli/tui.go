@@ -85,18 +85,36 @@ func runTUI(ctx context.Context, app *App) error {
 		return summaries, nil
 	}
 
-	// detail loads one pipeline's stage/action state plus recent history for
-	// the detail screen — the same core path as `pipeline show`.
+	// detail resolves one pipeline's current stage/action state — the v
+	// shortcut's single-call path to the most relevant build id (no history;
+	// the executions screen owns history now).
 	detail := func(ctx context.Context, name string) (*model.PipelineDetail, error) {
 		svc, err := app.PipelineService(ctx)
 		if err != nil {
 			return nil, err
 		}
-		resolver, err := loadResolver(ctx, false)
+		return svc.Detail(ctx, name, 0, nil)
+	}
+
+	// executions loads one pipeline's recent runs for the executions screen
+	// (session-memoized within cache.executions_ttl; r forces a refetch).
+	executions := func(ctx context.Context, name string, refresh bool) ([]model.Execution, error) {
+		svc, err := app.PipelineService(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return svc.Detail(ctx, name, 5, resolver)
+		return svc.Executions(ctx, name, 25, refresh)
+	}
+
+	// actions loads the per-action run details of one execution for the
+	// actions screen (chronological order, CodeBuild ids included; terminal
+	// executions' immutable action lists are session-memoized).
+	actions := func(ctx context.Context, name, execID string, done bool) ([]model.ActionExecution, error) {
+		svc, err := app.PipelineService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return svc.ActionExecutions(ctx, name, execID, done)
 	}
 
 	// logsFn fetches a CodeBuild build's raw log lines for the log screen —
@@ -149,6 +167,8 @@ func runTUI(ctx context.Context, app *App) error {
 		Fetch:        fetch,
 		Refresh:      refresh,
 		Detail:       detail,
+		Executions:   executions,
+		Actions:      actions,
 		Logs:         logsFn,
 		Release:      release,
 		ReleaseLimit: app.Cfg.Release.MaxTargets,

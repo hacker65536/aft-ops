@@ -1,12 +1,15 @@
 // Package tui is the Bubble Tea front end. A root model owns a stack of
-// screens (list → detail → log view, docs/design.md §9.1); each screen is an
-// independent model and navigates by emitting pushMsg/popMsg. The TUI talks
-// to the core exclusively through the injected function types below — it
-// never touches AWS clients directly.
+// screens (list → executions → actions → log view, docs/design.md §9.1);
+// each screen is an independent model and navigates by emitting
+// pushMsg/popMsg. Movement is vim-flavored: h pops, l (or enter) drills in,
+// j/k scroll, and v jumps straight to the most relevant CodeBuild log. The
+// TUI talks to the core exclusively through the injected function types
+// below — it never touches AWS clients directly.
 package tui
 
 import (
 	"context"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,8 +26,20 @@ type Fetch func(ctx context.Context, refresh bool, onProgress func(batch.Progres
 type Refresh func(ctx context.Context, names []string, onProgress func(batch.Progress)) ([]model.PipelineSummary, error)
 
 // DetailFunc loads one pipeline's stage/action state plus recent history
-// (wired to pipeline.Detail).
+// (wired to pipeline.Detail). The TUI uses it only for the v shortcut on the
+// list: one GetPipelineState call resolves the most relevant build id.
 type DetailFunc func(ctx context.Context, name string) (*model.PipelineDetail, error)
+
+// ExecutionsFunc loads one pipeline's recent executions, newest first
+// (wired to pipeline.Executions, which serves its session memo within the
+// configured TTL). refresh forces a refetch — the executions screen's r key.
+type ExecutionsFunc func(ctx context.Context, name string, refresh bool) ([]model.Execution, error)
+
+// ActionsFunc loads the per-action run details of one pipeline execution in
+// chronological order (wired to pipeline.ActionExecutions). done marks the
+// execution as terminal so the core may serve/store its immutable action
+// list from the session memo.
+type ActionsFunc func(ctx context.Context, name, execID string, done bool) ([]model.ActionExecution, error)
 
 // LogsFunc fetches a CodeBuild build's raw log lines by build id (wired to
 // logs.Service.Fetch). The log screen applies the terraform/raw/summary
@@ -43,6 +58,8 @@ type Deps struct {
 	Fetch        Fetch
 	Refresh      Refresh
 	Detail       DetailFunc
+	Executions   ExecutionsFunc
+	Actions      ActionsFunc
 	Logs         LogsFunc
 	Release      ReleaseFunc
 	ReleaseLimit int // guard: max targets per release (0 = no limit)
@@ -63,6 +80,34 @@ type (
 	pushMsg struct{ s screen }
 	popMsg  struct{}
 )
+
+// navDepth is the number of levels in the drill-down path
+// (list → executions → actions → log).
+const navDepth = 4
+
+// navDots renders the drill-down position indicator shown in every screen
+// header: one dot per level, the current one bright, the rest dim. It keeps
+// the operator oriented even after a v jump straight to the log.
+func navDots(current int) string {
+	var b strings.Builder
+	for i := 1; i <= navDepth; i++ {
+		if i == current {
+			b.WriteString(activeDotStyle.Render("•"))
+		} else {
+			b.WriteString(dimStyle.Render("•"))
+		}
+	}
+	return b.String()
+}
+
+// fastLogMsg carries the result of the v shortcut's async resolution: a
+// ready-to-push log screen for the picked build, or the error explaining why
+// none could be resolved. Emitted on the list (via DetailFunc) and on the
+// executions screen (via ActionsFunc).
+type fastLogMsg struct {
+	lm  *logModel
+	err error
+}
 
 // rootModel owns the screen stack and the current terminal size. It
 // delegates every non-navigation message to the top screen.

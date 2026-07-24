@@ -64,9 +64,10 @@ aft-ops/
 │   ├── tui/                     # Bubble Tea アプリ
 │   │   ├── app.go               # ルートモデル・画面遷移
 │   │   ├── pipelinelist.go      # 一覧画面
-│   │   ├── pipelinedetail.go    # 詳細画面（ステージ/実行履歴）
-│   │   ├── logview.go           # ログ閲覧画面
-│   │   └── confirm.go           # 実行確認ダイアログ
+│   │   ├── executions.go        # 実行履歴画面（1 パイプラインの実行一覧）
+│   │   ├── actions.go           # アクション一覧画面（1 実行のアクション + インライン詳細）
+│   │   ├── pipelinelog.go       # ログ閲覧画面
+│   │   └── release.go           # 一括 release（confirm → run → results）
 │   ├── core/
 │   │   ├── model/               # ドメインモデル（Pipeline, Account, Execution, StageState...）
 │   │   ├── pipeline/            # 一覧・詳細・release のサービス
@@ -205,11 +206,27 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 
 ## 7. キャッシュ（internal/cache）
 
+> **キャッシュ原則**: 終端状態（Succeeded/Failed/Stopped/…）のデータは不変なので積極的に
+> キャッシュする。in-flight（InProgress/Stopping）のものだけ常に再取得する。可変な一覧系は
+> TTL + 明示 refresh（`--refresh` / TUI の `r`）で制御する。AFT のインフラパイプラインは
+> アプリ CI/CD と違い大半の時間 idle であり、毎回取得は鮮度の利得に対してオーバーヘッドが
+> 大きい、という判断（当初の「実行ステータスは一切キャッシュしない」方針からの見直し）。
+
+ディスクキャッシュ（プロセスをまたいで有効）:
+
 | データ | ソース | 既定 TTL |
 |---|---|---|
 | account map（ID⇔名前⇔email） | 下記 7.1 | 24h |
 | pipeline 存在一覧 | ListPipelines | 6h |
 | 実行ステータス（per-entry） | ListPipelineExecutions | 10m（`status_ttl`）。実行中は常に再取得 |
+
+セッション内メモリ memo（TUI 起動中のみ・ディスクに書かない）:
+
+| データ | ソース | ポリシー |
+|---|---|---|
+| 実行履歴（executions 画面） | ListPipelineExecutions | 15m（`executions_ttl`、0 で無効）。先頭実行が in-flight なら常に再取得。`r` で強制 |
+| アクション実行（actions 画面 / `v`） | ListActionExecutions | 終端 execution のみ無期限（不変）。in-flight は毎回 |
+| build ログ（log 画面） | BatchGetBuilds + GetLogEvents | 完了 build のみ無期限（不変）。実行中は毎回 |
 
 - 保存先: `~/.cache/aft-ops/<org-id or profile>/` （プロファイル毎に分離し、業務/PoC org の取り違えを構造的に防止）
 - 形式: JSON + メタデータ（取得時刻・スキーマバージョン・取得元プロファイル）
@@ -281,27 +298,65 @@ aft-ops version / completion
 
 ### 9.1 画面構成
 
+CodePipeline の実データモデル（pipeline → executions → action executions → build log）に
+沿った 4 階層のドリルダウン。移動キーは vim 準拠: `h` 戻る / `l`（または `enter`）進む /
+`j`/`k` 上下 / `v` は全階層から「最も見たいログ」への直行ショートカット。
+各画面のヘッダ左端に階層インジケータ `••••`（現在位置=白 / 他=グレー）を表示し、
+`v` 直行後でも現在の深さが一目で分かる。
+
 ```
-[Pipeline List]  ──enter──▶  [Pipeline Detail]  ──l──▶  [Log View]
-  N rows                       stages / history           terraform log
-  / filter                     failed action             m mode switch
-  f status filter              ↑/↓ scroll                (future) search/follow
-  s sort key / o order
-  r/R refresh          ──x──▶  [Release]  (confirm → run → results)
-  space multi-select             count / targets / guard
+[Pipeline List] ──l/enter──▶ [Executions] ──l/enter──▶ [Actions] ──l/enter──▶ [Log View]
+  N rows                       recent runs (25)           per-action runs        terraform log
+  / filter  f status              of one pipeline           of one execution     m mode switch
+  s sort key / o order          id/status/duration        stage/action/status    j/k scroll
+  r/R refresh                     /revision                 inline summary/error
+  space multi-select           r refresh                  r refresh
   q quit
+      │                            │                          ▲
+      └────────── v ───────────────┴────── v ─────────────────┘   （failed action / 最後の build のログへ直行）
+
+[Pipeline List] ──x──▶ [Release]  (confirm → run → results)
 ```
 
-- 現状（実装済み）の一覧キー: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
-  (last-update→status→account)・`o` 昇降順トグル・`enter` 詳細画面・`space` 選択トグル・
-  `x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。既定ソートは last-update 降順
-  （CLI と同一のコア `model.SortSummaries`）。選択行は先頭列に `✓`、header に `[N selected]`
-- 詳細画面（実装済み）: `enter` で選択パイプラインの `pipeline.Detail`（ステージ/アクション + 履歴 5 件）を
-  取得し viewport にスクロール表示。描画は CLI の `output.PipelineDetailText` を再利用（CLI と同一テキスト）。
-  `↑/↓` スクロール・`l` ログ画面・`q`/`esc` で一覧へ戻る
-- ログ画面（実装済み）: 詳細画面で `l` → 失敗 CodeBuild アクション（無ければ build id を持つ最後のアクション）の
-  ログを `logs.Fetch` で 1 回取得し viewport 表示。`m` で terraform→raw→summary をローカル切替（再フェッチなし。
-  描画は CLI `pipeline logs` と同一の `logs.Render`）。`↑/↓` スクロール・`q`/`esc` で戻る
+- 一覧キー（実装済み）: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
+  (last-update→status→account)・`o` 昇降順トグル・`l`/`enter` 実行履歴画面・`v` ログ直行・
+  `space` 選択トグル・`x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。
+  既定ソートは last-update 降順（CLI と同一のコア `model.SortSummaries`）。
+  選択行は先頭列に `✓`、header に `[N selected]`
+- Executions 画面（実装済み）: `pipeline.Executions`（ListPipelineExecutions 1 ページ・新しい順）を
+  テーブル表示（短縮 id / status / 開始 / 所要 / commit message）。選択実行の source revisions
+  （source action 名 – 短縮 hash: commit message、AFT の 2 リポジトリ分）をテーブル下に
+  インライン表示。CodeConnections (GitHub) ソースの `RevisionSummary` は JSON 文字列で
+  届くため `model.Revision.Message()` が `CommitMessage` を unwrap する（マネジメント
+  コンソールと同じ見せ方。CLI `pipeline show` も同ヘルパーを使用）。`l`/`enter` で選択実行の
+  Actions 画面へ・`v` で選択実行のログ直行・`r` 強制再取得・`h`/`q`/`esc` で一覧へ戻る。
+  履歴は `executions_ttl`（既定 15m）のセッション内 memo から供給（先頭実行が in-flight なら
+  常に再取得）。Actions は終端 execution のぶんだけ無期限 memo（§7 のキャッシュ原則）
+- Actions 画面（実装済み）: `pipeline.ActionExecutions`（ListActionExecutions を実行 id で
+  フィルタ・時系列順に正規化）をテーブル表示（stage / action / status / 開始 / 所要）。
+  選択行の summary / error はテーブル下にインライン表示（独立した action detail 画面は
+  設けない — AFT パイプラインはアクション数が少なく詳細が薄いため）。ロード完了後、
+  終端 CodeBuild アクションのログをバックグラウンドで遅延取得し、terraform の結論 1 行
+  （`logs.Verdict`: `Error:` 優先 → `Apply complete!`/`No changes.` → `Plan:`）を summary に
+  表示する。verdict 中の add/change/destroy 数値は 0 以外を緑/黄/赤（terraform の plan 色）で
+  着色（表示層で幅クリップ後に適用）。この取得は log memo を温めるため、続けてログ画面を
+  開くと即表示になる。
+  build id を持つアクションで `l`/`enter`/`v` → ログ画面・`h`/`q`/`esc` で戻る
+- ログ画面（実装済み）: 対象 build のログを `logs.Fetch` で 1 回取得し viewport 表示。
+  `m` で terraform→raw→summary をローカル切替（再フェッチなし。描画は CLI `pipeline logs` と
+  同一の `logs.Render`）。`j`/`k` スクロール・`g`/`G` 先頭/末尾・`h`/`q`/`esc` で戻る。
+  less 風検索: `/` で入力 → `enter` で確定（現在位置以降の最初のマッチへジャンプ）・
+  `n`/`N` で次/前のマッチへ wraparound 移動・現在マッチ行は反転表示・footer に `i/N` 表示・
+  `esc` は検索クリア → 2 回目で戻る。マッチは ANSI 除去後の行に対する大小文字無視の部分一致で、
+  モード切替時は新しい描画に対して再検索される。
+  **完了 build のログはセッション内メモリに memoize**（`logs.Service` 保持。build ログは
+  完了後は不変のため安全）: 同一セッションで同じログを再訪しても API を叩かない。
+  実行中 build は毎回再取得。ディスクには書かない（ディスクキャッシュは §4.1 の
+  アカウント map・パイプライン一覧のみのまま）
+- `v` ログ直行（実装済み）: 「失敗した → terraform ログを見る」という最頻ケースの 1 打鍵ショートカット。
+  一覧では `pipeline.Detail`（GetPipelineState 1 回）、Executions 画面では選択実行の
+  `ActionExecutions` から、失敗アクション（無ければ build id を持つ最後のアクション）を解決して
+  ログ画面を直接 push する。解決不能時はエラーをその場に表示
 - Release 画面（実装済み・`internal/tui/release.go`）: 一覧で `space` 選択 → `x` で遷移。
   confirm（対象一覧 `output.PipelineTable` 再利用 + 件数 + `max_targets` ガード判定。超過時は `y` を無効化し
   「N 件外す」表示）→ 実行中は spinner + `Done/Total/Failed` 進捗 → 結果（`output.ReleaseTable` 再利用・
@@ -311,8 +366,8 @@ aft-ops version / completion
 
 - ルートモデルが画面スタックを管理（push/pop）。各画面は独立した `tea.Model`（`screen` interface）。
   ナビゲーションは `pushMsg`/`popMsg` をルートが解釈し、それ以外はスタック最上位へ委譲。
-  リサイズは push/pop 時に最上位へ再配送。TUI への依存注入は `tui.Deps`（Fetch/Refresh/Detail/Logs/Release/
-  ReleaseLimit）に集約
+  リサイズは push/pop 時に最上位へ再配送。TUI への依存注入は `tui.Deps`（Fetch/Refresh/Detail/
+  Executions/Actions/Logs/Release/ReleaseLimit）に集約
 - 一覧はロード中も操作可能: キャッシュ済み情報を即表示 → バッチ取得の進捗に応じて行を逐次更新（batch の Progress chan を `tea.Cmd` で購読）
 - 実行中パイプラインがある場合は自動ポーリング（間隔は設定、既定 30s）※未実装（Phase 3 候補）
 - multi-select → 一括 release（確認ダイアログに件数・対象を明示、F5 ガードは CLI と共通のコア層で実施）
@@ -342,6 +397,7 @@ cache:
   account_ttl: 24h
   pipeline_ttl: 6h
   status_ttl: 10m      # 実行ステータスのキャッシュ TTL（0 で無効化＝毎回 fan-out）
+  executions_ttl: 15m  # 実行履歴（TUI executions 画面）のセッション内 memo TTL（0 で無効化）
 
 release:
   max_targets: 50
