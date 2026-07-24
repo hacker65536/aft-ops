@@ -1,0 +1,62 @@
+# GoReleaser configuration (schema v2).
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: aft-ops
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: aft-ops
+    main: ./cmd/aft-ops
+    binary: aft-ops
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/hacker65536/aft-ops/internal/cli.version={{ .Version }}
+      - -X github.com/hacker65536/aft-ops/internal/cli.commit={{ .Commit }}
+      - -X github.com/hacker65536/aft-ops/internal/cli.date={{ .Date }}
+
+archives:
+  - id: aft-ops
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto

@@ -28,6 +28,7 @@ func Execute(ctx context.Context) error {
 	root := &cobra.Command{
 		Use:           "aft-ops",
 		Short:         "AFT Operations Toolkit — operate AFT-vended CodePipelines at scale",
+		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -66,6 +67,10 @@ func Execute(ctx context.Context) error {
 			return runTUI(cmd.Context(), app)
 		},
 	}
+
+	// Print just the banner for `--version`/`-v`, matching the `version`
+	// subcommand instead of cobra's default "aft-ops version ..." line.
+	root.SetVersionTemplate("{{.Version}}\n")
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&cfgPath, "config", "", "config file (default ~/.config/aft-ops/config.yaml)")

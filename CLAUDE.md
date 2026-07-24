@@ -29,10 +29,16 @@ customizations パイプライン（数百件規模）の状態確認・Release 
 ## 開発コマンド
 
 ```bash
-go build -o aft-ops ./cmd/aft-ops
-go test ./...
-go vet ./...
+make build        # go build -o aft-ops ./cmd/aft-ops
+make check        # go vet + go test ./...
+make snapshot     # GoReleaser でローカル全プラットフォームビルド（publish なし）
+make config-check # .goreleaser.yaml を検証
+make help         # 全ターゲット一覧
 ```
+
+リリースは `v*` タグの push で GitHub Actions (`.github/workflows/release.yml`) が
+GoReleaser を実行して自動生成する。バージョンは `internal/cli` の `version/commit/date`
+に ldflags で注入される（未注入時は Go build info からフォールバック）。
 
 ## AWS 環境
 
