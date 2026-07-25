@@ -33,6 +33,7 @@ customizations パイプライン（数百件規模）の状態確認・Release 
 ```bash
 make build        # go build -o aft-ops ./cmd/aft-ops
 make check        # go vet + go test ./...
+make demo         # docs/demo/*.tape → *.gif（要 vhs。オフライン fixture で録画）
 make snapshot     # GoReleaser でローカル全プラットフォームビルド（publish なし）
 make config-check # .goreleaser.yaml を検証
 make help         # 全ターゲット一覧
@@ -48,6 +49,8 @@ GoReleaser を実行して自動生成する。バージョンは `internal/cli`
   region は設定 / 環境変数 / フラグで指定（既定値の想定は `docs/design.md` 参照）。
 - 認証は AWS SDK 標準のクレデンシャルチェーンに委譲。ツールは認証情報を保持しない。
 - **書き込みを伴う動作確認（Release change / StartPipelineExecution 等）は必ずユーザーに確認してから**。
+  ただし `--demo <fixture.json>`（`docs/demo/`）は AWS を一切呼ばないので、
+  Release change を含めて確認なしで自由に動かしてよい。UI の挙動確認はまずこちらで。
 - 開発者ローカルの実アカウント ID・profile 名・org 区別などの固有値は `.claude/CLAUDE.local.md`
   （git 追跡外）に集約している。
 

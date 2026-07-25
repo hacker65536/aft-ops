@@ -8,7 +8,7 @@
 BINARY := aft-ops
 
 .DEFAULT_GOAL := help
-.PHONY: help build install test vet check tidy fmt snapshot config-check clean
+.PHONY: help build install test vet check tidy fmt demo snapshot config-check clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -33,6 +33,9 @@ tidy: ## Tidy go.mod / go.sum
 
 fmt: ## Format Go sources
 	gofmt -l -w .
+
+demo: ## Re-record the README demo GIFs from docs/demo/*.tape (needs vhs)
+	bash docs/demo/record.sh
 
 snapshot: ## Local multi-platform release build via GoReleaser (no publish)
 	goreleaser release --snapshot --clean --skip=publish

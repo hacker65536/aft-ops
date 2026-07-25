@@ -4,10 +4,13 @@ package cli
 
 import (
 	"context"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hacker65536/aft-ops/internal/config"
+	"github.com/hacker65536/aft-ops/internal/demo"
 	"github.com/hacker65536/aft-ops/internal/output"
 )
 
@@ -24,6 +27,7 @@ func Execute(ctx context.Context) error {
 		profile     string
 		region      string
 		outFormat   string
+		demoPath    string
 		concurrency int
 		rps         float64
 	)
@@ -52,6 +56,9 @@ func Execute(ctx context.Context) error {
 			if cmd.Flags().Changed("rps") {
 				cfg.Batch.RPS = rps
 			}
+			if err := applyDemo(app, &cfg, demoPath); err != nil {
+				return err
+			}
 			app.Cfg = cfg
 
 			f, err := output.ParseFormat(outFormat)
@@ -77,6 +84,8 @@ func Execute(ctx context.Context) error {
 	pf.StringVar(&profile, "profile", "", "AWS profile")
 	pf.StringVar(&region, "region", "", "AWS region")
 	pf.StringVarP(&outFormat, "output", "o", string(output.FormatTable), "output format: table|json")
+	pf.StringVar(&demoPath, "demo", "",
+		"run against a local fixture instead of AWS (offline demo; see docs/demo)")
 	pf.BoolVar(&app.NoColor, "no-color", false, "disable colored output")
 	pf.BoolVar(&app.Refresh, "refresh", false, "bypass caches and refetch")
 	pf.IntVar(&concurrency, "concurrency", 0, "batch concurrency (overrides config)")
@@ -92,4 +101,45 @@ func Execute(ctx context.Context) error {
 	)
 
 	return root.ExecuteContext(ctx)
+}
+
+// applyDemo switches the app into offline demo mode when --demo (or
+// AFT_OPS_DEMO) names a fixture.
+//
+// The fixture's identity replaces the configured profile and region rather
+// than merely being displayed: the cache is scoped by profile+region, so
+// borrowing the operator's real profile name would file fake pipelines under
+// the scope their real ones live in. Metrics go off for the same reason the
+// fakes exist at all — nothing here goes through the SDK middleware, so
+// recording a run would only produce a file of zeroes.
+func applyDemo(app *App, cfg *config.Config, path string) error {
+	if path == "" {
+		path = os.Getenv("AFT_OPS_DEMO")
+	}
+	if path == "" {
+		return nil
+	}
+	env, err := demo.Load(path)
+	if err != nil {
+		return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+	}
+	if v := os.Getenv("AFT_OPS_DEMO_LATENCY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return &ExitError{Code: ExitToolError, Err: err,
+				Message: "invalid AFT_OPS_DEMO_LATENCY: " + err.Error()}
+		}
+		env.SetLatency(d)
+	}
+	app.Demo = env
+
+	id := env.Identity()
+	cfg.Profile = id.Profile
+	if cfg.Profile == "" {
+		cfg.Profile = "demo"
+	}
+	cfg.WriteProfile = ""
+	cfg.Region = id.Region
+	cfg.Metrics.Enabled = false
+	return nil
 }

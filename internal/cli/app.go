@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/hacker65536/aft-ops/internal/core/account"
 	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/pipeline"
+	"github.com/hacker65536/aft-ops/internal/demo"
 	"github.com/hacker65536/aft-ops/internal/metrics"
 	"github.com/hacker65536/aft-ops/internal/output"
 )
@@ -38,6 +41,12 @@ type App struct {
 	Format  output.Format
 	NoColor bool
 	Refresh bool
+	// Demo, when set (--demo), serves every read and write from a local
+	// fixture instead of AWS. Each AWS-facing constructor below branches on
+	// it; nothing else in the tool knows the difference.
+	Demo *demo.Env
+
+	demoBanner sync.Once
 
 	mu        sync.Mutex
 	rec       *metrics.Recorder
@@ -89,6 +98,13 @@ func (a *App) ReadAWS(ctx context.Context) (aws.Config, error) {
 }
 
 func (a *App) readAWSLocked(ctx context.Context) (aws.Config, error) {
+	if a.Demo != nil {
+		// Every demo-mode path is routed to a fake before it gets here, so
+		// reaching this point would mean an AWS client was about to be built
+		// for a run that promised not to touch AWS. Fail loudly rather than
+		// quietly resolve credentials.
+		return aws.Config{}, errors.New("demo mode: no AWS client is available for this operation")
+	}
 	if a.readCfg != nil {
 		return *a.readCfg, nil
 	}
@@ -171,6 +187,10 @@ const identityTTL = 24 * time.Hour
 // built, which is what announces the target on stderr — callers that must
 // print before entering an alternate screen (the TUI) use it for that.
 func (a *App) Identity(ctx context.Context) string {
+	if a.Demo != nil {
+		a.announceDemoTarget()
+		return a.Demo.Identity().Account
+	}
 	if _, err := a.ReadAWS(ctx); err != nil {
 		return ""
 	}
@@ -243,6 +263,19 @@ func (a *App) announceTarget(region string, verified bool) {
 	fmt.Fprintln(os.Stderr, line)
 }
 
+// announceDemoTarget is the demo-mode counterpart of announceTarget. It
+// says the same thing in the same place — and says that none of it is real,
+// so a demo recording can never be mistaken for a session against an actual
+// management account.
+func (a *App) announceDemoTarget() {
+	a.demoBanner.Do(func() {
+		id := a.Demo.Identity()
+		fmt.Fprintf(os.Stderr,
+			"aws: account %s · region %s · profile %s  (demo mode: %s, no AWS calls)\n",
+			id.Account, id.Region, id.Profile, filepath.Base(a.Demo.Path()))
+	})
+}
+
 // profileLabel names the credential source for the target banner, calling
 // out the case where nothing was configured and the ambient environment
 // decided which account we are talking to.
@@ -285,12 +318,19 @@ func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
 	if a.pipeSvc != nil {
 		return a.pipeSvc, nil
 	}
-	cfg, err := a.readAWSLocked(ctx)
-	if err != nil {
-		return nil, err
+	var read pipeline.API
+	if a.Demo != nil {
+		a.announceDemoTarget()
+		read = a.Demo.PipelineAPI()
+	} else {
+		cfg, err := a.readAWSLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		read = codepipeline.NewFromConfig(cfg)
 	}
 	a.pipeSvc = &pipeline.Service{
-		Read:          codepipeline.NewFromConfig(cfg),
+		Read:          read,
 		Batch:         a.BatchConfig(),
 		Cache:         a.CacheStore(),
 		PipelineTTL:   a.Cfg.Cache.PipelineTTL.D(),
@@ -308,6 +348,14 @@ func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
 	if a.logsSvc != nil {
 		return a.logsSvc, nil
 	}
+	if a.Demo != nil {
+		a.announceDemoTarget()
+		a.logsSvc = &logs.Service{
+			CodeBuild: a.Demo.CodeBuildAPI(),
+			Logs:      a.Demo.LogsAPI(),
+		}
+		return a.logsSvc, nil
+	}
 	cfg, err := a.readAWSLocked(ctx)
 	if err != nil {
 		return nil, err
@@ -321,6 +369,10 @@ func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
 
 // StartClient builds the write-side CodePipeline client.
 func (a *App) StartClient(ctx context.Context) (pipeline.StartAPI, error) {
+	if a.Demo != nil {
+		a.announceDemoTarget()
+		return a.Demo.StartAPI(), nil
+	}
 	cfg, err := a.WriteAWS(ctx)
 	if err != nil {
 		return nil, err
@@ -330,6 +382,10 @@ func (a *App) StartClient(ctx context.Context) (pipeline.StartAPI, error) {
 
 // AccountSource builds the configured account source.
 func (a *App) AccountSource(ctx context.Context) (account.Source, error) {
+	if a.Demo != nil {
+		a.announceDemoTarget()
+		return a.Demo.AccountSource(), nil
+	}
 	switch a.Cfg.AccountSource {
 	case config.SourceAFTDynamoDB:
 		cfg, err := a.ReadAWS(ctx)

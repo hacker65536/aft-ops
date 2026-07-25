@@ -9,6 +9,35 @@ scriptable CLI and an interactive TUI.
 > Status: early development. See [docs/requirements.md](docs/requirements.md)
 > and [docs/design.md](docs/design.md).
 
+## Demo
+
+Every recording below runs against a local fixture — no AWS account, no
+credentials, no network. You can reproduce any of them with
+`aft-ops --demo docs/demo/fixture.json` (see [docs/demo](docs/demo)).
+
+**Triage from the command line** — every account pipeline at a glance, filter
+to what is broken, and get the terraform error out of a 200-line CodeBuild log
+without opening the console:
+
+![CLI demo](docs/demo/cli.gif)
+
+**Drill down in the TUI** — pipeline list → executions → actions → log, with
+each build's terraform verdict fetched lazily and the CodeBuild noise stripped
+out of the log:
+
+![TUI demo](docs/demo/tui.gif)
+
+**Release change on many pipelines at once** — `space` to select, `x` to
+confirm against freshly refetched status, then the list polls the released
+rows until nothing is running:
+
+![Release demo](docs/demo/tui-release.gif)
+
+**Watch what is still going** — `--watch` refetches only the rows that can
+still change, and says how many that was:
+
+![Watch demo](docs/demo/watch.gif)
+
 ## Install
 
 ```bash
@@ -26,6 +55,9 @@ go install github.com/hacker65536/aft-ops/cmd/aft-ops@latest
 
 ```bash
 go build -o aft-ops ./cmd/aft-ops
+
+# try it without an AWS account: everything below works against a fixture
+./aft-ops --demo docs/demo/fixture.json
 
 # interactive TUI
 ./aft-ops

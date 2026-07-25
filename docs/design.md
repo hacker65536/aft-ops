@@ -78,8 +78,10 @@ aft-ops/
 │   ├── metrics/                 # API 計測（SDK middleware + 集計）
 │   ├── awsx/                    # AWS クライアント生成・レートリミッタ・リトライ
 │   ├── config/                  # 設定の読込・マージ
+│   ├── demo/                    # fixture 駆動のフェイク AWS クライアント（--demo）
 │   └── output/                  # table/json レンダラ、exit code 規約
 ├── docs/
+│   └── demo/                    # fixture・VHS tape・録画スクリプト・生成 GIF
 ├── .goreleaser.yaml
 └── .github/workflows/           # CI (test/lint) + release
 ```
@@ -482,6 +484,50 @@ metrics:
   記録を再利用した場合はバナーに `(identity from cache; --refresh re-checks)` を付け、
   **その run で検証していないことを表示上も区別する**（バナーが誤った安心を与えないため）
 
+## 10.1 デモモード（`--demo`）
+
+`--demo <fixture.json>`（env: `AFT_OPS_DEMO`）を渡すと、AWS を一切呼ばずに
+ローカルの fixture だけでツール全体が動く。認証・ネットワーク・AFT アカウントの
+いずれも不要。用途は 2 つ:
+
+1. README のショーケース GIF を、実データを一切出さずにオフライン・決定論的に録画する
+2. OSS 利用者が実アカウントに向ける前に挙動を試せる「お試しモード」
+
+### 差し替え境界は AWS SDK クライアント interface
+
+フェイクは `internal/demo` に置き、**コア層がすでに依存している狭い interface を
+そのまま実装する**:
+
+| interface | 定義 |
+|---|---|
+| `pipeline.API` | ListPipelines / ListPipelineExecutions / GetPipelineState / ListActionExecutions |
+| `pipeline.StartAPI` | StartPipelineExecution |
+| `logs.CodeBuildAPI` | BatchGetBuilds |
+| `logs.LogsAPI` | GetLogEvents |
+| `account.Source` | アカウント一覧 |
+
+したがって**アダプタ層より上（正規化・キャッシュ・バッチ・ソート・両レンダラ・TUI）は
+実データと完全に同じ経路を通り**、デモ専用の分岐はどこにも入らない。分岐は
+`internal/cli/app.go` の AWS クライアント生成 5 箇所だけで、そこに到達しない
+`readAWSLocked` はデモ時に明示エラーを返す（「AWS を呼ばない」約束を破る経路が
+静かに成立しないようにする）。SDK 型を組み立てるのは `internal/demo` の中だけなので、
+「AWS SDK の型を core の公開 API に露出させない」原則も保たれる。
+
+### 時刻は相対・状態は生きている
+
+fixture の時刻はすべて**ロード時刻からの相対値**（`started_ago` / `took` /
+`completes_in`）。絶対時刻を持つと録画のたびに「3 週間前」になるため。
+`completes_in` を持つ実行は録画中に実際に終了するので、`--watch` と TUI の
+ポーリングは「本当に動いているものを待って更新する」様子をそのまま撮れる。
+デモの Release change も同様に fixture 上に in-flight な実行を生やす（メモリ上のみ・
+ファイルは変更しない）。
+
+キャッシュは通常どおり有効。fixture の `identity.profile` がキャッシュスコープに
+なるため、実プロファイルのスコープにデモデータが混ざることはない。
+metrics はデモ時に無効化する（フェイク呼び出しは SDK middleware を通らない）。
+
+詳細と fixture のスキーマは [docs/demo/README.md](demo/README.md)。
+
 ## 11. テスト戦略
 
 | レイヤ | 方法 |
@@ -491,6 +537,7 @@ metrics:
 | CLI | golden file test（table/json 出力の回帰） |
 | TUI | `teatest`（bubbletea 公式テストユーティリティ）でキー操作→画面遷移 |
 | E2E | 検証用の AFT 環境で read 系 + release の疎通確認。本番相当環境では read 系のみ手動確認 |
+| demo fixture | 同梱 fixture を `internal/demo` のフェイク経由でコアサービスに流し、在庫フィルタ・ステータス分布・アクション順・ログ抽出・in-flight の完了・release を検証（fixture の腐敗を録画ではなくビルドで検出する） |
 
 ## 12. CI / リリース
 
