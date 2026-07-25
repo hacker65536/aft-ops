@@ -245,9 +245,10 @@ func TestActionExecutionsPaginatesAndSortsChronologically(t *testing.T) {
 		t.Errorf("Duration = %v, want 4m", got)
 	}
 
-	// The failed Apply action is what LogAction picks.
-	if la := model.LogAction(actions); la == nil || la.ActionName != "terraform-apply" {
-		t.Errorf("LogAction = %+v, want terraform-apply", la)
+	// Only the CodeBuild-backed action carries a log; the source action does not.
+	if builds := model.LogActions(actions); len(builds) != 1 ||
+		builds[0].ActionName != "terraform-apply" {
+		t.Errorf("LogActions = %+v, want just terraform-apply", builds)
 	}
 }
 

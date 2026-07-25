@@ -18,7 +18,10 @@ import (
 )
 
 // SchemaVersion is bumped only on breaking JSON shape changes.
-const SchemaVersion = 1
+//
+//	2: `pipeline logs` emits a list of per-build sections instead of one
+//	   build object, so an execution's two terraform runs both appear.
+const SchemaVersion = 2
 
 // Format selects the rendering mode.
 type Format string
@@ -190,13 +193,12 @@ func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
 func ExecutionTable(w io.Writer, items []model.Execution, color bool) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "EXECUTION\tSTATUS\tSTARTED\tDURATION\tREVISION")
+	now := time.Now()
 	for _, e := range items {
 		started, duration := "-", "-"
 		if e.StartTime != nil {
 			started = humanTime(*e.StartTime)
-			if e.LastUpdate != nil {
-				duration = e.LastUpdate.Sub(*e.StartTime).Truncate(time.Second).String()
-			}
+			duration = fmtDuration(e.Elapsed(now))
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			e.ID, styleStatus(e.Status, color), started, duration, revisionSummary(e.Revisions))
@@ -209,11 +211,9 @@ func ExecutionTable(w io.Writer, items []model.Execution, color bool) {
 func ActionExecutionTable(w io.Writer, items []model.ActionExecution, color bool) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "  STAGE\tACTION\tSTATUS\tDURATION\tBUILD\tDETAIL")
+	now := time.Now()
 	for _, a := range items {
-		duration := "-"
-		if d := a.Duration(); d > 0 {
-			duration = d.Truncate(time.Second).String()
-		}
+		duration := fmtDuration(a.Elapsed(now))
 		build := a.CodeBuildID
 		if build == "" {
 			build = "-"
@@ -337,6 +337,15 @@ func CacheNote(w io.Writer, what string, fetchedAt time.Time) {
 
 func humanTime(t time.Time) string {
 	return t.Local().Format("2006-01-02 15:04") + " (" + humanDuration(time.Since(t)) + " ago)"
+}
+
+// fmtDuration renders an elapsed span for the DURATION columns, where a run
+// that has not measurably started yet reads as "-" rather than "0s".
+func fmtDuration(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	return d.Truncate(time.Second).String()
 }
 
 func humanDuration(d time.Duration) string {

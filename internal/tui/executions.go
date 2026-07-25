@@ -231,12 +231,13 @@ func (m execsModel) openFastLog() tea.Cmd {
 
 func (m *execsModel) setRows() {
 	rows := make([]table.Row, 0, len(m.execs))
+	now := time.Now()
 	for _, e := range m.execs {
 		rows = append(rows, table.Row{
 			shortExecID(e.ID),
 			string(e.Status),
 			fmtTimePtr(e.StartTime),
-			fmtDurationPtr(e.StartTime, e.LastUpdate),
+			fmtElapsed(e.Elapsed(now)),
 			revisionOf(e),
 		})
 	}
@@ -261,13 +262,15 @@ func fmtTimePtr(t *time.Time) string {
 	return t.Local().Format("2006-01-02 15:04")
 }
 
-// fmtDurationPtr renders the elapsed time between two optional times,
-// truncated to seconds; "-" when either end is unknown.
-func fmtDurationPtr(from, to *time.Time) string {
-	if from == nil || to == nil {
+// fmtElapsed renders a run's elapsed time truncated to seconds, "-" when it
+// has not measurably started. Callers pass model.Elapsed, which counts up to
+// now while a run is still in flight — CodePipeline leaves lastUpdateTime at
+// startTime until an execution ends, so the recorded span is 0s until then.
+func fmtElapsed(d time.Duration) string {
+	if d <= 0 {
 		return "-"
 	}
-	return to.Sub(*from).Truncate(time.Second).String()
+	return d.Truncate(time.Second).String()
 }
 
 // revisionOf summarizes the source revision that triggered an execution:

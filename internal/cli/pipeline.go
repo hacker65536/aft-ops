@@ -405,10 +405,12 @@ func newPipelineLogsCmd(app *App) *cobra.Command {
 terraform portion.
 
 By default the failed CodeBuild action of <target>'s current state is used.
-Pass --execution <id> to look at a past run instead (its failed action, else
-its last build), or --build <id> to point straight at a CodeBuild id. Output
-modes: terraform section (default), --raw (full log), or --summary (plan
-verdict and error blocks only — the machine-readable boundary).`,
+Pass --execution <id> to look at a past run instead — an AFT customizations
+run applies terraform twice, so that prints both the global and the account
+build, separated by a "──── <stage> / <action> ────" rule. Pass --build <id>
+to point straight at a single CodeBuild id. Output modes: terraform section
+(default), --raw (full log), or --summary (plan verdict and error blocks only
+— the machine-readable boundary).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -421,19 +423,15 @@ verdict and error blocks only — the machine-readable boundary).`,
 					Message: "--build and --execution are mutually exclusive"}
 			}
 
-			id := buildID
-			if id == "" {
+			targets := []buildTarget{{BuildID: buildID}}
+			if buildID == "" {
 				var err error
-				if id, err = resolveBuildID(ctx, app, args[0], execID); err != nil {
+				if targets, err = resolveBuildTargets(ctx, app, args[0], execID); err != nil {
 					return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 				}
 			}
 
 			svc, err := app.LogsService(ctx)
-			if err != nil {
-				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
-			}
-			bl, err := svc.Fetch(ctx, id)
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
@@ -445,19 +443,41 @@ verdict and error blocks only — the machine-readable boundary).`,
 			case summary:
 				mode = logs.ModeSummary
 			}
-			lines := logs.Render(bl.Lines, mode)
+
+			// Fetch sequentially: these calls sit outside the batch rate
+			// limiter, and an execution has two builds at most.
+			sections := make([]logSection, 0, len(targets))
+			var failed int
+			for _, t := range targets {
+				s := logSection{
+					Stage:   t.Stage,
+					Action:  t.Action,
+					BuildID: t.BuildID,
+				}
+				bl, err := svc.Fetch(ctx, t.BuildID)
+				if err != nil {
+					// One unreadable build must not hide the other: record the
+					// gap where the log would have been and keep going. Only a
+					// clean sweep of failures is fatal.
+					failed++
+					s.Error = err.Error()
+					s.Lines = []string{"(log unavailable: " + err.Error() + ")"}
+					fmt.Fprintf(os.Stderr, "warning: could not fetch build %s: %v\n", t.BuildID, err)
+				} else {
+					s.BuildID, s.Group, s.Stream = bl.BuildID, bl.Group, bl.Stream
+					s.Lines = logs.Render(bl.Lines, mode)
+				}
+				sections = append(sections, s)
+			}
+			if failed == len(sections) {
+				return &ExitError{Code: ExitToolError,
+					Message: fmt.Sprintf("could not fetch any log of %s", args[0])}
+			}
 
 			if app.Format == output.FormatJSON {
-				return output.JSON(os.Stdout, struct {
-					BuildID string   `json:"build_id"`
-					Group   string   `json:"log_group"`
-					Stream  string   `json:"log_stream"`
-					Lines   []string `json:"lines"`
-				}{bl.BuildID, bl.Group, bl.Stream, lines})
+				return output.JSON(os.Stdout, sections)
 			}
-			for _, ln := range lines {
-				fmt.Fprintln(os.Stdout, ln)
-			}
+			writeLogSections(os.Stdout, sections)
 			return nil
 		},
 	}
@@ -471,18 +491,65 @@ verdict and error blocks only — the machine-readable boundary).`,
 	return cmd
 }
 
-// resolveBuildID picks which CodeBuild log to show. Without --execution that
-// is the failed action of the pipeline's current state; with one it is that
-// execution's failed action, else its last build (model.LogAction) — the same
-// choice the TUI's v shortcut makes.
-func resolveBuildID(ctx context.Context, app *App, target, execID string) (string, error) {
+// buildTarget is one CodeBuild run `pipeline logs` prints, named by the stage
+// and action that produced it.
+type buildTarget struct {
+	Stage   string
+	Action  string
+	BuildID string
+}
+
+// logSection is one build's rendered log, and the JSON element `pipeline logs`
+// emits. The command returns a list of these because an AFT customizations
+// execution runs terraform twice.
+type logSection struct {
+	Stage   string   `json:"stage,omitempty"`
+	Action  string   `json:"action,omitempty"`
+	BuildID string   `json:"build_id"`
+	Group   string   `json:"log_group,omitempty"`
+	Stream  string   `json:"log_stream,omitempty"`
+	Error   string   `json:"error,omitempty"`
+	Lines   []string `json:"lines"`
+}
+
+// writeLogSections prints the fetched logs, separating them by a
+// "──── <stage> / <action> ────" rule when there is more than one.
+//
+// A single build gets no rule: the stderr line already named it, so the rule
+// would only add a line that scripts reading this output did not have before.
+func writeLogSections(w io.Writer, sections []logSection) {
+	for i, s := range sections {
+		if len(sections) > 1 {
+			if i > 0 {
+				fmt.Fprintln(w)
+			}
+			fmt.Fprintf(w, "──── %s ────\n", model.ActionLabel(s.Stage, s.Action))
+		}
+		for _, ln := range s.Lines {
+			fmt.Fprintln(w, ln)
+		}
+	}
+}
+
+// resolveBuildTargets picks which CodeBuild logs to show.
+//
+// With --execution it returns every CodeBuild-backed action of that run, in
+// pipeline order. A customizations execution applies terraform twice — global
+// customizations, then account customizations — and either half may be the one
+// that changed something, so showing a single build answers "what did this run
+// do?" with half the truth. This matches what the TUI's v shortcut shows.
+//
+// Without --execution the subject is a failure in the pipeline's current
+// state, which is naturally one build: AFT never reaches the account stage
+// when the global stage fails.
+func resolveBuildTargets(ctx context.Context, app *App, target, execID string) ([]buildTarget, error) {
 	name, resolver, err := resolveTarget(ctx, app, target)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	svc, err := app.PipelineService(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if execID != "" {
@@ -490,23 +557,29 @@ func resolveBuildID(ctx context.Context, app *App, target, execID string) (strin
 		// and the execution may still be running.
 		actions, err := svc.ActionExecutions(ctx, name, execID, false)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		a := model.LogAction(actions)
-		if a == nil {
-			return "", fmt.Errorf("execution %s of %s has no CodeBuild action", execID, name)
+		builds := model.LogActions(actions)
+		if len(builds) == 0 {
+			return nil, fmt.Errorf("execution %s of %s has no CodeBuild action", execID, name)
 		}
-		// Name the stage, not just the action: an AFT customizations run has
-		// an "Apply" action in both the global and the account stage, so the
-		// action name alone does not say which log this is.
-		fmt.Fprintf(os.Stderr, "using action %q of stage %q, execution %s (build %s)\n",
-			a.ActionName, a.StageName, execID, a.CodeBuildID)
-		return a.CodeBuildID, nil
+		targets := make([]buildTarget, 0, len(builds))
+		for _, a := range builds {
+			// Name the stage, not just the action: an AFT customizations run
+			// has an "Apply" action in both the global and the account stage,
+			// so the action name alone does not say which log this is.
+			fmt.Fprintf(os.Stderr, "using action %q of stage %q, execution %s (build %s)\n",
+				a.ActionName, a.StageName, execID, a.CodeBuildID)
+			targets = append(targets, buildTarget{
+				Stage: a.StageName, Action: a.ActionName, BuildID: a.CodeBuildID,
+			})
+		}
+		return targets, nil
 	}
 
 	detail, err := svc.Detail(ctx, name, 0, resolver)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	for _, b := range detail.BuildActions() {
 		if b.Action.Status != model.StatusFailed {
@@ -514,9 +587,11 @@ func resolveBuildID(ctx context.Context, app *App, target, execID string) (strin
 		}
 		fmt.Fprintf(os.Stderr, "using failed action %q of stage %q (build %s)\n",
 			b.Action.Name, b.Stage, b.Action.CodeBuildID)
-		return b.Action.CodeBuildID, nil
+		return []buildTarget{{
+			Stage: b.Stage, Action: b.Action.Name, BuildID: b.Action.CodeBuildID,
+		}}, nil
 	}
-	return "", fmt.Errorf(
+	return nil, fmt.Errorf(
 		"%s has no failed CodeBuild action; pass --execution <id> or --build <id> to pick one", name)
 }
 

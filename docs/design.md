@@ -272,6 +272,10 @@ aft-ops pipeline executions <target>  # F2: 実行履歴一覧（alias: execs）
     [--limit 25] [--actions]     # --actions は各実行のアクション（CodeBuild id 付き）も展開
 aft-ops pipeline logs <target>   # F2: CodeBuild/terraform ログ
     [--execution <id>] [--build <id>] [--raw|--summary]
+    # 既定（フラグ無し）= 現在の state の失敗アクション 1 本
+    # --execution = その実行の build を全部（global/account の 2 本）。
+    #   `──── <stage> / <action> ────` で区切る。単一 build のときは区切り無し
+    # --build = 指定 1 本のみ
 aft-ops pipeline release [targets...]   # F3: Release change
     --status Failed              # フィルタ結果を対象に（対象決定時に status を強制再取得）
     --file targets.txt | -       # 明示リスト（stdin 可）
@@ -299,8 +303,12 @@ aft-ops version / completion
 |---|---|
 | 0 | 正常（対象すべて成功/取得完了） |
 | 1 | ドメイン上の失敗あり（例: Failed パイプラインが存在、release の一部失敗） |
-| 2 | ツールエラー（設定不正・認証失敗・API エラー） |
+| 2 | ツールエラー（設定不正・認証失敗・API エラー）および**要求の拒否**（フラグの排他違反、`max_targets` 等の安全ガード） |
 | 130 | ユーザー中断 |
+
+※ 安全ガードによる拒否を 1 ではなく 2 に割り当てるのは、1 が「一部は実行された上での失敗」を意味するため。
+`release` が 1 を返したときは既に起動したパイプラインがあり得るが、ガード拒否では**1 本も起動していない**。
+呼び出し側がこの 2 つを区別できるよう、拒否は「呼び出し方を直す必要がある」側（2）に置く。
 
 ※ `pipeline list` で「Failed が存在したら exit 1」は `--fail-on-error` フラグでオプトイン（既定は 0。監視スクリプト用途向け）。
 
@@ -396,8 +404,9 @@ CodePipeline の実データモデル（pipeline → executions → action execu
     `pipeline.Detail`（GetPipelineState 1 回）＋ `model.PipelineDetail.BuildActions()` にフォールバック
   - Executions 画面: 選択実行の `ActionExecutions` → **build id を持つ全アクション**
     （`model.LogActions`、パイプライン順）を 1 つのログ画面に連結。失敗した 1 本だけに絞らないのは、
-    どちらの terraform に答えがあるか探しているのがまさにこの操作だから。単一 build を選ぶ
-    `model.LogAction` は CLI `pipeline logs --execution` 側の既定として残る
+    どちらの terraform に答えがあるか探しているのがまさにこの操作だから。CLI `pipeline logs --execution`
+    も同じ `model.LogActions` を使い、区切り行のラベルは共通の `model.ActionLabel`。
+    単一 build を選ぶ `model.LogAction` は残すが、現在の利用者は無い（将来の単一選択用）
 - Release 画面（実装済み・`internal/tui/release.go`）: 一覧で `space` 選択 → `x` で遷移。
   confirm（対象一覧 `output.PipelineTable` 再利用 + 件数 + `max_targets` ガード判定。超過時は `y` を無効化し
   「N 件外す」表示）→ 実行中は spinner + `Done/Total/Failed` 進捗 → 結果（`output.ReleaseTable` 再利用・

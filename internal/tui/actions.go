@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
@@ -287,13 +288,14 @@ func (m actionsModel) openLog() tea.Cmd {
 
 func (m *actionsModel) setRows() {
 	rows := make([]table.Row, 0, len(m.actions))
+	now := time.Now()
 	for _, a := range m.actions {
 		rows = append(rows, table.Row{
 			a.StageName,
 			a.ActionName,
 			string(a.Status),
 			fmtTimePtr(a.StartTime),
-			fmtDurationPtr(a.StartTime, a.LastUpdate),
+			fmtElapsed(a.Elapsed(now)),
 		})
 	}
 	m.table.SetRows(rows)

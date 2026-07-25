@@ -109,9 +109,8 @@ func TestRevisionMessage(t *testing.T) {
 }
 
 // LogActions keeps every build of an execution, in pipeline order, and drops
-// the actions that have no log (source actions); LogAction narrows the same
-// input to the single most relevant one.
-func TestLogActionsAndLogAction(t *testing.T) {
+// the actions that have no log (source actions).
+func TestLogActions(t *testing.T) {
 	acts := []ActionExecution{
 		{StageName: "Source", ActionName: "aft-global-customizations", Status: StatusSucceeded},
 		{StageName: "AFT-Global-Customizations", ActionName: "aft-global-customizations",
@@ -128,10 +127,6 @@ func TestLogActionsAndLogAction(t *testing.T) {
 		t.Errorf("LogActions = %q/%q, want global then account",
 			got[0].CodeBuildID, got[1].CodeBuildID)
 	}
-	if a := LogAction(acts); a == nil || a.CodeBuildID != "account:uuid" {
-		t.Errorf("LogAction = %+v, want the failed build", a)
-	}
-
 	if got := LogActions(acts[:1]); len(got) != 0 {
 		t.Errorf("LogActions with no build ids = %+v, want none", got)
 	}
@@ -167,5 +162,47 @@ func TestBuildActions(t *testing.T) {
 
 	if got := (PipelineDetail{Stages: d.Stages[:1]}).BuildActions(); len(got) != 0 {
 		t.Errorf("a source-only pipeline has no logs, got %+v", got)
+	}
+}
+
+// CodePipeline leaves lastUpdateTime equal to startTime while an execution is
+// in flight, so the recorded span is 0s for a run that may have been going for
+// minutes. Elapsed counts up to now until the run reaches a terminal status.
+func TestElapsedCountsUpWhileInFlight(t *testing.T) {
+	start := at("2026-07-26T00:58:35Z")
+	now := start.Add(3*time.Minute + 25*time.Second)
+
+	inFlight := Execution{Status: StatusInProgress, StartTime: start, LastUpdate: start}
+	if got, want := inFlight.Elapsed(now), 3*time.Minute+25*time.Second; got != want {
+		t.Errorf("in-flight Elapsed = %v, want %v", got, want)
+	}
+
+	done := Execution{
+		Status:     StatusSucceeded,
+		StartTime:  start,
+		LastUpdate: at("2026-07-26T01:03:06Z"),
+	}
+	if got, want := done.Elapsed(now), 4*time.Minute+31*time.Second; got != want {
+		t.Errorf("terminal Elapsed = %v, want the recorded span %v", got, want)
+	}
+
+	act := ActionExecution{Status: StatusInProgress, StartTime: start, LastUpdate: start}
+	if got, want := act.Elapsed(now), 3*time.Minute+25*time.Second; got != want {
+		t.Errorf("in-flight action Elapsed = %v, want %v", got, want)
+	}
+}
+
+func TestElapsedNeverGoesNegative(t *testing.T) {
+	start := at("2026-07-26T00:58:35Z")
+	past := start.Add(-time.Minute) // clock skew: start is in the future
+
+	if got := (Execution{Status: StatusInProgress, StartTime: start}).Elapsed(past); got != 0 {
+		t.Errorf("Elapsed with start in the future = %v, want 0", got)
+	}
+	if got := (Execution{Status: StatusInProgress}).Elapsed(past); got != 0 {
+		t.Errorf("Elapsed without a start time = %v, want 0", got)
+	}
+	if got := (Execution{Status: StatusSucceeded, StartTime: start}).Elapsed(past); got != 0 {
+		t.Errorf("terminal Elapsed without an end time = %v, want 0", got)
 	}
 }

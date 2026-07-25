@@ -72,6 +72,36 @@ type Execution struct {
 	Revisions  []Revision `json:"revisions,omitempty"`
 }
 
+// Elapsed is how long the execution has taken so far: the recorded span once
+// it is over, and the time since it started while it is still running.
+//
+// The two cases differ because CodePipeline reports lastUpdateTime equal to
+// startTime for as long as an execution is in flight, so the recorded span
+// reads 0s for a run that may have been going for minutes.
+func (e Execution) Elapsed(now time.Time) time.Duration {
+	return elapsed(e.Status, e.StartTime, e.LastUpdate, now)
+}
+
+// elapsed is the shared rule behind Execution.Elapsed and
+// ActionExecution.Elapsed. It returns a negative duration for no case: a clock
+// skew that puts start in the future yields 0 rather than a count-up backwards.
+func elapsed(status Status, start, last *time.Time, now time.Time) time.Duration {
+	if start == nil {
+		return 0
+	}
+	end := now
+	if status.Terminal() {
+		if last == nil {
+			return 0
+		}
+		end = *last
+	}
+	if d := end.Sub(*start); d > 0 {
+		return d
+	}
+	return 0
+}
+
 // Revision is a source revision that triggered an execution (e.g. the
 // git commit fed into the pipeline's source stage).
 type Revision struct {
@@ -152,12 +182,33 @@ func (a ActionExecution) Duration() time.Duration {
 	return a.LastUpdate.Sub(*a.StartTime)
 }
 
+// Elapsed is how long the action run has taken so far: the recorded span once
+// it is over, and the time since it started while it is still running. See
+// Execution.Elapsed for why the two cases differ.
+func (a ActionExecution) Elapsed(now time.Time) time.Duration {
+	return elapsed(a.Status, a.StartTime, a.LastUpdate, now)
+}
+
+// ActionLabel names one action run for display. The action name alone will
+// not do: an AFT customizations run executes an action called "Apply" in both
+// the global and the account customizations stage, so two labels would read
+// the same and a reader could not tell which run is which. The stage is what
+// distinguishes them.
+func ActionLabel(stage, action string) string {
+	switch {
+	case stage == "":
+		return action
+	case action == "":
+		return stage
+	}
+	return stage + " / " + action
+}
+
 // LogActions returns every action run of one execution that carries a
 // CodeBuild id, in pipeline order. An AFT customizations pipeline runs
 // terraform twice — global customizations, then account customizations — so
 // "the log" of an execution is really two logs, and a reader that shows only
-// one hides half the run. LogAction picks a single one instead, for callers
-// that can show only that (the CLI's default).
+// one hides half the run: either half may be the one that changed something.
 func LogActions(actions []ActionExecution) []ActionExecution {
 	var out []ActionExecution
 	for _, a := range actions {
@@ -166,26 +217,6 @@ func LogActions(actions []ActionExecution) []ActionExecution {
 		}
 	}
 	return out
-}
-
-// LogAction picks the action whose log an operator most likely wants from
-// one execution's action runs: the first failed action carrying a CodeBuild
-// id, else the last action (in slice order) that has one. Nil when none has
-// a build id. This is the per-execution counterpart of the
-// PipelineDetail-based heuristic used by `pipeline logs`.
-func LogAction(actions []ActionExecution) *ActionExecution {
-	var last *ActionExecution
-	for i := range actions {
-		a := &actions[i]
-		if a.CodeBuildID == "" {
-			continue
-		}
-		if a.Status == StatusFailed {
-			return a
-		}
-		last = a
-	}
-	return last
 }
 
 // StageState is one stage's status and its actions.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,5 +171,59 @@ func TestSummariesFromNames(t *testing.T) {
 	}
 	if got[0].Latest != nil {
 		t.Error("status-free summaries must not carry an execution")
+	}
+}
+
+func TestWriteLogSectionsSingleBuildHasNoRule(t *testing.T) {
+	var b bytes.Buffer
+	writeLogSections(&b, []logSection{{
+		Stage:  "AFT-Account-Customizations",
+		Action: "Apply",
+		Lines:  []string{"Apply complete!"},
+	}})
+
+	if got, want := b.String(), "Apply complete!\n"; got != want {
+		t.Errorf("single build output = %q, want the log alone %q", got, want)
+	}
+}
+
+// An AFT customizations execution applies terraform twice, and either half may
+// be the one that changed something, so both are printed and each is labelled
+// by its stage — both actions are called "Apply".
+func TestWriteLogSectionsLabelsEachBuildByStage(t *testing.T) {
+	var b bytes.Buffer
+	writeLogSections(&b, []logSection{
+		{Stage: "AFT-Global-Customizations", Action: "Apply",
+			Lines: []string{"Apply complete! Resources: 0 added, 1 changed, 0 destroyed."}},
+		{Stage: "AFT-Account-Customizations", Action: "Apply",
+			Lines: []string{"No changes."}},
+	})
+
+	want := "──── AFT-Global-Customizations / Apply ────\n" +
+		"Apply complete! Resources: 0 added, 1 changed, 0 destroyed.\n" +
+		"\n" +
+		"──── AFT-Account-Customizations / Apply ────\n" +
+		"No changes.\n"
+	if got := b.String(); got != want {
+		t.Errorf("two-build output =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestWriteLogSectionsKeepsUnreadableBuildVisible(t *testing.T) {
+	var b bytes.Buffer
+	writeLogSections(&b, []logSection{
+		{Stage: "AFT-Global-Customizations", Action: "Apply",
+			Error: "boom", Lines: []string{"(log unavailable: boom)"}},
+		{Stage: "AFT-Account-Customizations", Action: "Apply",
+			Lines: []string{"No changes."}},
+	})
+
+	out := b.String()
+	if !strings.Contains(out, "AFT-Global-Customizations / Apply") ||
+		!strings.Contains(out, "(log unavailable: boom)") {
+		t.Errorf("a failed fetch must leave a labelled gap, got\n%s", out)
+	}
+	if !strings.Contains(out, "No changes.") {
+		t.Errorf("one unreadable build hid the other, got\n%s", out)
 	}
 }

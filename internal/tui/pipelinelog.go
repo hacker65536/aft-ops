@@ -35,19 +35,10 @@ type logTarget struct {
 	buildID string
 }
 
-// label names one build in the UI. The action name alone will not do: an AFT
-// customizations run executes an action called "Apply" in both the global and
-// the account customizations stage, so two sections would carry the same
-// label and the operator could not tell which log is which. The stage is what
-// distinguishes them.
+// label names one build in the UI, by the same stage/action rule the CLI's
+// section headers use.
 func (t logTarget) label() string {
-	switch {
-	case t.stage == "":
-		return t.action
-	case t.action == "":
-		return t.stage
-	}
-	return t.stage + " / " + t.action
+	return model.ActionLabel(t.stage, t.action)
 }
 
 // execLogTargets turns one execution's action runs into log targets: every
