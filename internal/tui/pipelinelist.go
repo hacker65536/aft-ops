@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
@@ -58,6 +59,10 @@ type uiModel struct {
 	release      ReleaseFunc
 	releaseLimit int
 
+	pollInterval time.Duration
+	account      string
+	region       string
+
 	table   table.Model
 	filter  textinput.Model
 	spin    spinner.Model
@@ -68,6 +73,7 @@ type uiModel struct {
 	selected   map[string]bool         // pipeline names marked for release
 	progress   batch.Progress
 	progressCh chan batch.Progress
+	pollArmed  bool
 	statusIdx  int
 	sortKey    model.SortKey
 	sortOrder  model.SortOrder
@@ -117,10 +123,38 @@ func newModel(ctx context.Context, d Deps) uiModel {
 		fetch: d.Fetch, refresh: d.Refresh, detail: d.Detail,
 		execsFn: d.Executions, actionsFn: d.Actions,
 		logs: d.Logs, release: d.Release, releaseLimit: d.ReleaseLimit,
+		pollInterval: d.PollInterval, account: d.Account, region: d.Region,
 		table: t, filter: ti, spin: sp,
 		selected: map[string]bool{},
 		sortKey:  model.SortByLastUpdate, sortOrder: model.OrderDesc,
 	}
+}
+
+// pollMsg fires one auto-refresh round of the in-flight rows.
+type pollMsg struct{}
+
+// schedulePoll arms the next auto-refresh when polling is enabled and at
+// least one pipeline is running. Terminal rows never change on their own, so
+// an all-idle list stops polling entirely and the tool goes quiet. Only one
+// tick is ever in flight (pollArmed), so manual refreshes cannot stack up
+// parallel timers.
+func (m *uiModel) schedulePoll() tea.Cmd {
+	if m.pollArmed || m.pollInterval <= 0 || m.refresh == nil || len(m.inFlightNames()) == 0 {
+		return nil
+	}
+	m.pollArmed = true
+	return tea.Tick(m.pollInterval, func(time.Time) tea.Msg { return pollMsg{} })
+}
+
+// inFlightNames lists the pipelines that are currently running.
+func (m uiModel) inFlightNames() []string {
+	var names []string
+	for _, it := range m.items {
+		if it.Status().InFlight() {
+			names = append(names, it.PipelineName)
+		}
+	}
+	return names
 }
 
 // selMark is the first column's width; it shows a check for selected rows.
@@ -221,13 +255,13 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		m.items = msg.items
 		m.resort()
-		return m, nil
+		return m, m.schedulePoll()
 
 	case refreshedMsg:
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
-			return m, nil
+			return m, m.schedulePoll()
 		}
 		cur := m.table.Cursor()
 		byName := make(map[string]int, len(m.items))
@@ -241,7 +275,18 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		m.applyFilter()
 		m.table.SetCursor(cur) // keep the operator's place
-		return m, nil
+		return m, m.schedulePoll()
+
+	case pollMsg:
+		m.pollArmed = false
+		if m.loading {
+			return m, m.schedulePoll() // busy; try again next interval
+		}
+		names := m.inFlightNames()
+		if len(names) == 0 {
+			return m, nil
+		}
+		return m.beginRefreshMany(names)
 
 	case fastLogMsg:
 		m.loading = false
@@ -448,7 +493,7 @@ func (m uiModel) openRelease() tea.Cmd {
 		return nil
 	}
 	model.SortSummaries(targets, model.SortByAccount, model.OrderAsc)
-	rm := newReleaseModel(m.ctx, m.release, targets, m.releaseLimit, m.width, m.height)
+	rm := newReleaseModel(m.ctx, m.release, m.refresh, targets, m.releaseLimit, m.width, m.height)
 	return func() tea.Msg { return pushMsg{s: rm} }
 }
 
@@ -534,6 +579,9 @@ func (m uiModel) View() string {
 	var b strings.Builder
 
 	header := navDots(1) + " " + titleStyle.Render("aft-ops — account pipelines")
+	if m.account != "" {
+		header += dimStyle.Render("  [" + m.account + " " + m.region + "]")
+	}
 	if want := statusCycle[m.statusIdx]; want != "" {
 		header += dimStyle.Render("  [status: " + string(want) + "]")
 	}

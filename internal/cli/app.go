@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -11,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"golang.org/x/term"
 
 	"github.com/hacker65536/aft-ops/internal/awsx"
@@ -26,17 +29,23 @@ import (
 
 // App holds resolved configuration and lazily-built AWS clients shared by
 // all subcommands.
+//
+// The lazy fields are guarded by mu: the TUI runs its core calls from
+// concurrent tea.Cmd goroutines (several at once — the actions screen fetches
+// every build's verdict), so first-use construction must be serialized.
 type App struct {
 	Cfg     config.Config
 	Format  output.Format
 	NoColor bool
 	Refresh bool
 
-	rec      *metrics.Recorder
-	readCfg  *aws.Config
-	writeCfg *aws.Config
-	logsSvc  *logs.Service
-	pipeSvc  *pipeline.Service
+	mu        sync.Mutex
+	rec       *metrics.Recorder
+	readCfg   *aws.Config
+	writeCfg  *aws.Config
+	logsSvc   *logs.Service
+	pipeSvc   *pipeline.Service
+	accountID string // resolved caller identity (see Identity)
 }
 
 // Color reports whether stdout table output should be colorized.
@@ -53,7 +62,7 @@ func (a *App) initMetrics() {
 	if !a.Cfg.Metrics.Enabled {
 		return
 	}
-	rec, err := metrics.NewRecorder(a.Cfg.Metrics.Dir)
+	rec, err := metrics.NewRecorder(a.Cfg.Metrics.Dir, a.Cfg.Metrics.KeepRuns)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: metrics disabled:", err)
 		return
@@ -61,12 +70,25 @@ func (a *App) initMetrics() {
 	a.rec = rec
 }
 
+// closeMetrics is idempotent: it runs from a defer in Execute (cobra skips
+// PersistentPostRun when a command returns an error, which would otherwise
+// leave empty metrics files behind).
 func (a *App) closeMetrics() {
-	_ = a.rec.Close()
+	a.mu.Lock()
+	rec := a.rec
+	a.rec = nil
+	a.mu.Unlock()
+	_ = rec.Close()
 }
 
 // ReadAWS returns the aws.Config for read operations (lazy, cached).
 func (a *App) ReadAWS(ctx context.Context) (aws.Config, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.readAWSLocked(ctx)
+}
+
+func (a *App) readAWSLocked(ctx context.Context) (aws.Config, error) {
 	if a.readCfg != nil {
 		return *a.readCfg, nil
 	}
@@ -75,15 +97,33 @@ func (a *App) ReadAWS(ctx context.Context) (aws.Config, error) {
 		return aws.Config{}, err
 	}
 	a.readCfg = &cfg
+	// First contact with AWS: pin down which account these credentials
+	// actually resolve to before any data is fetched or cached. --refresh
+	// bypasses caches, and the recorded identity is one of them.
+	a.resolveIdentityLocked(ctx, cfg, a.Refresh)
 	return cfg, nil
 }
 
 // WriteAWS returns the aws.Config for mutating operations. It reuses the
 // read config when no distinct write_profile is set.
+//
+// Either way the caller identity is verified against AWS here, never taken
+// from the recorded value: this is the path that starts pipeline executions,
+// and "which account am I about to change?" is not a question to answer from
+// a day-old note. The extra call costs a fraction of a second on an operation
+// that already asks a human to confirm.
 func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	wp := a.Cfg.EffectiveWriteProfile()
 	if wp == a.Cfg.Profile {
-		return a.ReadAWS(ctx)
+		cfg, err := a.readAWSLocked(ctx)
+		if err != nil {
+			return aws.Config{}, err
+		}
+		a.resolveIdentityLocked(ctx, cfg, true)
+		return cfg, nil
 	}
 	if a.writeCfg != nil {
 		return *a.writeCfg, nil
@@ -93,12 +133,127 @@ func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 		return aws.Config{}, err
 	}
 	a.writeCfg = &cfg
+	// A distinct write profile is a distinct set of credentials: say which
+	// account they land in before anything is triggered.
+	out, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not resolve the write profile's identity:", err)
+		return cfg, nil
+	}
+	fmt.Fprintf(os.Stderr, "aws (write): account %s · region %s · profile %s\n",
+		aws.ToString(out.Account), cfg.Region, wp)
 	return cfg, nil
 }
 
 // CacheStore returns the profile/region-scoped cache.
 func (a *App) CacheStore() cache.Store {
 	return cache.New(a.Cfg.Cache.Dir, a.Cfg.Profile, a.Cfg.Region)
+}
+
+// identityCacheKey records which AWS account this cache scope was filled
+// from, so a scope can never silently serve another account's data.
+const identityCacheKey = "identity"
+
+// identityTTL is how long a recorded account id is reused for a *configured*
+// profile before being re-verified. A profile pins its account in
+// ~/.aws/config, so the mapping only changes when someone edits that file;
+// re-checking daily catches that, while a fully-cached `pipeline list` stays
+// instant (verifying costs ~0.6s — credential resolution plus the STS call —
+// which is 30x the entire cached run).
+//
+// An unconfigured profile gets no such reuse: there the account is whatever
+// the ambient environment says today, which is exactly the mix-up this
+// guards against.
+const identityTTL = 24 * time.Hour
+
+// Identity returns the AWS account id the current credentials resolve to
+// (empty when it could not be determined). It forces the read config to be
+// built, which is what announces the target on stderr — callers that must
+// print before entering an alternate screen (the TUI) use it for that.
+func (a *App) Identity(ctx context.Context) string {
+	if _, err := a.ReadAWS(ctx); err != nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.accountID
+}
+
+// resolveIdentityLocked works out which account the credentials belong to,
+// announces it on stderr, and guards the cache scope against a profile that
+// now points somewhere else.
+//
+// This exists because the cache scope is keyed by profile+region: with no
+// profile configured the SDK falls back to the ambient credential chain
+// (AWS_PROFILE and friends), so the same scope can be filled from different
+// accounts on different days. Naming the account on every run makes the
+// mix-up visible immediately, and the recorded id makes it impossible to
+// serve one account's pipelines under another's.
+//
+// A configured profile reuses its recorded id within identityTTL so the
+// cached read path stays instant; force skips that reuse (mutating commands
+// verify unconditionally — see WriteAWS).
+func (a *App) resolveIdentityLocked(ctx context.Context, cfg aws.Config, force bool) {
+	store := a.CacheStore()
+	if !force && a.Cfg.Profile != "" {
+		if prev, _, ok := cache.Get[string](store, identityCacheKey, identityTTL); ok {
+			a.accountID = prev
+			a.announceTarget(cfg.Region, false)
+			return
+		}
+	}
+
+	out, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not resolve the caller identity:", err)
+		return
+	}
+	a.accountID = aws.ToString(out.Account)
+
+	prev, _, ok := cache.Get[string](store, identityCacheKey, cache.Forever)
+	if ok && prev != a.accountID {
+		fmt.Fprintf(os.Stderr,
+			"warning: this cache scope was filled from account %s but the credentials now resolve to %s; discarding the cached data\n",
+			prev, a.accountID)
+		if err := store.Clear(); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: failed to clear the stale cache:", err)
+		}
+	}
+	if !ok || prev != a.accountID {
+		if err := cache.Put(store, identityCacheKey, a.accountID); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: failed to record the cache identity:", err)
+		}
+	}
+	a.announceTarget(cfg.Region, true)
+}
+
+// announceTarget names the account every command is about to act on. It is
+// one line on stderr, printed once per run, and it is the thing that makes a
+// wrong-account operation obvious before it happens rather than after.
+//
+// A reused record is labelled as such: the banner may only assert what was
+// actually checked this run, or it becomes a source of false confidence
+// rather than a guard against it.
+func (a *App) announceTarget(region string, verified bool) {
+	line := fmt.Sprintf("aws: account %s · region %s · profile %s",
+		a.accountID, region, a.profileLabel())
+	if !verified {
+		line += "  (identity from cache; --refresh re-checks)"
+	}
+	fmt.Fprintln(os.Stderr, line)
+}
+
+// profileLabel names the credential source for the target banner, calling
+// out the case where nothing was configured and the ambient environment
+// decided which account we are talking to.
+func (a *App) profileLabel() string {
+	if a.Cfg.Profile != "" {
+		return a.Cfg.Profile
+	}
+	if env := os.Getenv("AWS_PROFILE"); env != "" {
+		return fmt.Sprintf("(unset — using AWS_PROFILE=%s)", env)
+	}
+	return "(unset — using the default credential chain)"
 }
 
 // BatchConfig maps config to the batch engine.
@@ -125,10 +280,12 @@ func (a *App) statusOptions() pipeline.StatusOptions {
 // PipelineService builds the read-side pipeline service (lazy, cached — the
 // instance carries the session-scoped executions/actions memos).
 func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.pipeSvc != nil {
 		return a.pipeSvc, nil
 	}
-	cfg, err := a.ReadAWS(ctx)
+	cfg, err := a.readAWSLocked(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +303,12 @@ func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
 // (lazy, cached — the instance carries the session-scoped memo of completed
 // builds' logs, so the TUI revisiting a log performs no requests).
 func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.logsSvc != nil {
 		return a.logsSvc, nil
 	}
-	cfg, err := a.ReadAWS(ctx)
+	cfg, err := a.readAWSLocked(ctx)
 	if err != nil {
 		return nil, err
 	}

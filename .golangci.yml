@@ -1,0 +1,21 @@
+# golangci-lint configuration (schema v2).
+#
+# The standard linter set is deliberate: this is an operations tool, so the
+# value is in catching real mistakes (unchecked errors, dead code, suspicious
+# constructs), not in style debates. The exclusion presets keep the noise that
+# every Go codebase produces — unchecked fmt.Fprintf/Close, legacy patterns —
+# out of the report.
+version: "2"
+
+linters:
+  default: standard
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt

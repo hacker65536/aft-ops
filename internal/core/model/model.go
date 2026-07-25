@@ -227,6 +227,16 @@ func (p PipelineSummary) Status() Status {
 	return p.Latest.Status
 }
 
+// StatusStats reports where a batch of statuses came from, so the UI can
+// state freshness as fact instead of inferring it from timestamps.
+type StatusStats struct {
+	Fetched   int           `json:"fetched"`    // refetched from the API this call
+	FromCache int           `json:"from_cache"` // served from the status cache
+	Failed    int           `json:"failed"`     // refetch failed; previous value kept
+	Oldest    time.Time     `json:"oldest"`     // fetch time of the oldest cached entry
+	TTL       time.Duration `json:"ttl"`
+}
+
 // SortKey selects the primary ordering of a pipeline list.
 type SortKey string
 
@@ -274,9 +284,9 @@ func SortSummaries(items []PipelineSummary, key SortKey, order SortOrder) {
 		a, b := items[i], items[j]
 		switch key {
 		case SortByStatus:
-			as, bs := string(a.Status()), string(b.Status())
-			if as != bs {
-				return xorDesc(as < bs, desc)
+			ar, br := statusRank(a.Status()), statusRank(b.Status())
+			if ar != br {
+				return xorDesc(ar < br, desc)
 			}
 		case SortByAccount:
 			if !accountEqual(a, b) {
@@ -296,6 +306,35 @@ func SortSummaries(items []PipelineSummary, key SortKey, order SortOrder) {
 		}
 		return accountLess(a, b) // stable tiebreak, always ascending
 	})
+}
+
+// statusRank orders statuses by how much they want an operator's attention,
+// most urgent first. Sorting by status is a triage move ("what is broken?"),
+// so alphabetical order — which would bury Failed under Cancelled — is the
+// wrong answer even though it is the obvious one.
+func statusRank(s Status) int {
+	switch s {
+	case StatusFailed:
+		return 0
+	case StatusStopping:
+		return 1
+	case StatusInProgress:
+		return 2
+	case StatusStopped:
+		return 3
+	case StatusCancelled:
+		return 4
+	case StatusAbandoned:
+		return 5
+	case StatusSuperseded:
+		return 6
+	case StatusUnknown:
+		return 7
+	case StatusSucceeded:
+		return 8
+	default:
+		return 9
+	}
 }
 
 // xorDesc flips an ascending comparison when the order is descending.

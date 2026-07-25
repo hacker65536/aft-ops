@@ -10,8 +10,10 @@ package tui
 import (
 	"context"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hacker65536/aft-ops/internal/batch"
 	"github.com/hacker65536/aft-ops/internal/core/model"
@@ -63,6 +65,14 @@ type Deps struct {
 	Logs         LogsFunc
 	Release      ReleaseFunc
 	ReleaseLimit int // guard: max targets per release (0 = no limit)
+	// PollInterval re-refetches in-flight pipelines on the list screen while
+	// any are running (0 disables it). Terminal rows are left alone: they
+	// cannot change on their own.
+	PollInterval time.Duration
+	// Account and Region name the target the TUI is attached to; they are
+	// shown in the list header, since the TUI cannot use the stderr banner.
+	Account string
+	Region  string
 }
 
 // screen is one navigable view in the stack. Both the list and the detail
@@ -98,6 +108,18 @@ func navDots(current int) string {
 		}
 	}
 	return b.String()
+}
+
+// clipToWidth reduces s to its first line and at most w terminal cells,
+// appending an ellipsis when it had to cut. Width-aware on purpose: byte
+// slicing would split a multi-byte rune (commit messages, error text) and
+// paint mojibake into the layout.
+func clipToWidth(s string, w int) string {
+	s = strings.SplitN(s, "\n", 2)[0]
+	if w <= 0 || ansi.StringWidth(s) <= w {
+		return s
+	}
+	return ansi.Truncate(s, w, "…")
 }
 
 // fastLogMsg carries the result of the v shortcut's async resolution: a

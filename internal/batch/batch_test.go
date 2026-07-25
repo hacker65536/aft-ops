@@ -124,6 +124,38 @@ func TestRunChunksSequentially(t *testing.T) {
 	}
 }
 
+// Even a cancelled run must account for every item: a progress display that
+// freezes at 3/20 is indistinguishable from a hung tool.
+func TestRunProgressReachesTotalWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var last Progress
+	var mu sync.Mutex
+
+	results := Run(ctx, Config{Concurrency: 1}, make([]int, 20),
+		func(ctx context.Context, _ int) (struct{}, error) {
+			cancel()
+			return struct{}{}, ctx.Err()
+		},
+		func(p Progress) {
+			mu.Lock()
+			if p.Done > last.Done {
+				last = p
+			}
+			mu.Unlock()
+		})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if last.Done != 20 || last.Total != 20 {
+		t.Fatalf("final progress %+v, want Done=Total=20 even after cancellation", last)
+	}
+	for i, r := range results {
+		if r.Err == nil {
+			t.Fatalf("item %d has no error; every item should be settled after cancellation", i)
+		}
+	}
+}
+
 func TestRunProgressReachesTotal(t *testing.T) {
 	var last Progress
 	var mu sync.Mutex

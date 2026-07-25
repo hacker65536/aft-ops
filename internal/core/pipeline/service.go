@@ -23,13 +23,11 @@ import (
 	"github.com/hacker65536/aft-ops/internal/core/model"
 )
 
+// The status cache envelope is read with cache.Forever: its own per-entry
+// FetchedAt is authoritative, so the envelope must never self-expire.
 const (
 	inventoryCacheKey = "pipelines"
 	statusCacheKey    = "statuses"
-	// statusEnvelopeTTL is effectively unbounded: the status cache's own
-	// per-entry FetchedAt is authoritative, so the cache envelope must never
-	// self-expire.
-	statusEnvelopeTTL = 100 * 365 * 24 * time.Hour
 )
 
 // API is the subset of the CodePipeline client used by the read side.
@@ -76,7 +74,8 @@ type execsEntry struct {
 }
 
 // Inventory returns the names of all AFT account pipelines, served from
-// cache when fresh (existence changes rarely; statuses are never cached).
+// cache when fresh — which pipelines exist changes far more rarely than
+// what they are doing (statuses have their own, much shorter TTL).
 func (s *Service) Inventory(ctx context.Context, refresh bool) (names []string, cachedAt time.Time, err error) {
 	if !refresh {
 		if names, at, ok := cache.Get[[]string](s.Cache, inventoryCacheKey, s.PipelineTTL); ok {
@@ -117,6 +116,10 @@ type StatusOptions struct {
 	RefreshAll      bool            // ignore the cache; refetch every name
 	RefreshOnly     map[string]bool // force-refetch these names
 	RefreshInFlight bool            // always refetch cached in-flight entries
+	// Prune drops cached entries for pipelines outside names. Set it only
+	// when names is the full inventory (a `pl list` pass), never for a
+	// targeted subset refresh — otherwise the rest of the cache is lost.
+	Prune bool
 }
 
 // Statuses returns the latest execution of each pipeline, served from the
@@ -124,18 +127,34 @@ type StatusOptions struct {
 // that is stale/forced/in-flight hits the API (through the batch engine), so
 // a repeated call within the TTL performs no requests. Per-item fetch
 // failures are reported in PipelineSummary.FetchError unless a cached value
-// can stand in. The merged cache is written back when anything was fetched.
+// can stand in — the accompanying StatusStats still counts them, so a failed
+// refresh behind a stale value is never silent. The merged cache is written
+// back when anything was fetched or pruned.
 func (s *Service) Statuses(
 	ctx context.Context,
 	names []string,
 	resolver *account.Resolver,
 	opts StatusOptions,
 	onProgress func(batch.Progress),
-) []model.PipelineSummary {
+) ([]model.PipelineSummary, model.StatusStats) {
 	cached := map[string]StatusEntry{}
 	if !opts.RefreshAll {
-		if m, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, statusEnvelopeTTL); ok {
+		if m, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, cache.Forever); ok {
 			cached = m
+		}
+	}
+
+	pruned := 0
+	if opts.Prune {
+		keep := make(map[string]bool, len(names))
+		for _, n := range names {
+			keep[n] = true
+		}
+		for n := range cached {
+			if !keep[n] {
+				delete(cached, n)
+				pruned++
+			}
 		}
 	}
 
@@ -151,6 +170,8 @@ func (s *Service) Statuses(
 		}
 	}
 
+	stats := model.StatusStats{TTL: opts.TTL}
+	fetched := map[string]bool{}
 	fetchErrs := map[string]string{}
 	if len(toFetch) > 0 {
 		results := batch.Run(ctx, s.Batch, toFetch,
@@ -161,6 +182,7 @@ func (s *Service) Statuses(
 		for i, res := range results {
 			name := toFetch[i]
 			if res.Err != nil {
+				stats.Failed++
 				// Retain any prior cached value; only surface an error when
 				// there is nothing to fall back on.
 				if _, ok := cached[name]; !ok {
@@ -169,7 +191,10 @@ func (s *Service) Statuses(
 				continue
 			}
 			cached[name] = StatusEntry{Execution: res.Value, FetchedAt: fetchedAt}
+			fetched[name] = true
 		}
+	}
+	if len(fetched) > 0 || pruned > 0 {
 		if err := cache.Put(s.Cache, statusCacheKey, cached); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: failed to write status cache:", err)
 		}
@@ -190,13 +215,21 @@ func (s *Service) Statuses(
 			sum.Latest = e.Execution
 			at := e.FetchedAt
 			sum.StatusFetchedAt = &at
+			if fetched[name] {
+				stats.Fetched++
+			} else {
+				stats.FromCache++
+				if stats.Oldest.IsZero() || at.Before(stats.Oldest) {
+					stats.Oldest = at
+				}
+			}
 		}
 		if msg, ok := fetchErrs[name]; ok {
 			sum.FetchError = msg
 		}
 		summaries[i] = sum
 	}
-	return summaries
+	return summaries, stats
 }
 
 // InvalidateStatuses drops the given pipelines from the status cache so the
@@ -206,7 +239,7 @@ func (s *Service) InvalidateStatuses(names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	cached, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, statusEnvelopeTTL)
+	cached, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, cache.Forever)
 	if !ok {
 		return nil // nothing cached yet
 	}
@@ -214,6 +247,27 @@ func (s *Service) InvalidateStatuses(names []string) error {
 		delete(cached, name)
 	}
 	return cache.Put(s.Cache, statusCacheKey, cached)
+}
+
+// InvalidateExecutions drops the given pipelines' memoized execution history
+// (and the action lists hanging off it). Like InvalidateStatuses, this is for
+// after a release: the pipeline has a new run that the memo predates, and the
+// memo's own TTL would otherwise hide it for minutes.
+func (s *Service) InvalidateExecutions(names []string) {
+	if len(names) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, name := range names {
+		delete(s.execsMemo, name)
+		prefix := name + "\x00"
+		for key := range s.actionsMemo {
+			if strings.HasPrefix(key, prefix) {
+				delete(s.actionsMemo, key)
+			}
+		}
+	}
 }
 
 func (s *Service) latestExecution(ctx context.Context, name string) (*model.Execution, error) {

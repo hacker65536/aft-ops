@@ -92,7 +92,7 @@ func TestStatusesServesFreshFromCache(t *testing.T) {
 	svc := newStatusService(api, t)
 	opts := StatusOptions{TTL: time.Hour, RefreshInFlight: true}
 
-	sums := svc.Statuses(context.Background(), []string{p1, p2}, nil, opts, nil)
+	sums, _ := svc.Statuses(context.Background(), []string{p1, p2}, nil, opts, nil)
 	if api.callCount(p1) != 1 || api.callCount(p2) != 1 {
 		t.Fatalf("first call should fetch both; got p1=%d p2=%d", api.callCount(p1), api.callCount(p2))
 	}
@@ -164,7 +164,7 @@ func TestStatusesErrorRetainsStaleValue(t *testing.T) {
 	// Now p1 errors; force a refetch. The stale-but-known value must survive
 	// and no FetchError is surfaced.
 	api.errNames[p1] = true
-	sums := svc.Statuses(context.Background(), []string{p1}, nil,
+	sums, _ := svc.Statuses(context.Background(), []string{p1}, nil,
 		StatusOptions{TTL: time.Hour, RefreshOnly: map[string]bool{p1: true}}, nil)
 	if sums[0].Latest == nil {
 		t.Error("stale cached value should be retained on fetch error")
@@ -175,7 +175,7 @@ func TestStatusesErrorRetainsStaleValue(t *testing.T) {
 
 	// A name that was never cached and errors must surface FetchError.
 	api.errNames[p3] = true
-	sums = svc.Statuses(context.Background(), []string{p3}, nil, StatusOptions{TTL: time.Hour}, nil)
+	sums, _ = svc.Statuses(context.Background(), []string{p3}, nil, StatusOptions{TTL: time.Hour}, nil)
 	if sums[0].FetchError == "" {
 		t.Error("uncached fetch error should surface FetchError")
 	}
@@ -202,6 +202,97 @@ func TestStatusesSubsetRefreshPreservesOthers(t *testing.T) {
 	svc.Statuses(context.Background(), []string{p1, p2}, nil, StatusOptions{TTL: time.Hour}, nil)
 	if api.callCount(p2) != 1 {
 		t.Errorf("p2 cache entry was clobbered by the subset refresh; got %d calls", api.callCount(p2))
+	}
+}
+
+// The stats are what the UI prints instead of guessing from timestamps, so
+// they have to match what actually happened: fetched vs served, plus the
+// refreshes that failed behind a retained value.
+func TestStatusesReportStats(t *testing.T) {
+	api := newCountingAPI()
+	svc := newStatusService(api, t)
+	opts := StatusOptions{TTL: time.Hour}
+
+	_, stats := svc.Statuses(context.Background(), []string{p1, p2}, nil, opts, nil)
+	if stats.Fetched != 2 || stats.FromCache != 0 || stats.Failed != 0 {
+		t.Errorf("cold call stats = %+v, want 2 fetched", stats)
+	}
+
+	_, stats = svc.Statuses(context.Background(), []string{p1, p2}, nil, opts, nil)
+	if stats.Fetched != 0 || stats.FromCache != 2 {
+		t.Errorf("warm call stats = %+v, want 2 from cache", stats)
+	}
+	if stats.Oldest.IsZero() {
+		t.Error("cached stats should carry the oldest fetch time")
+	}
+
+	// A failed refresh keeps serving the previous value, but must still be
+	// counted — otherwise the failure is invisible.
+	api.errNames[p1] = true
+	_, stats = svc.Statuses(context.Background(), []string{p1, p2}, nil,
+		StatusOptions{TTL: time.Hour, RefreshOnly: map[string]bool{p1: true}}, nil)
+	if stats.Failed != 1 {
+		t.Errorf("stats = %+v, want Failed=1", stats)
+	}
+}
+
+// A full-inventory pass drops cached entries for pipelines that no longer
+// exist; a subset refresh must never do that (it would wipe the cache).
+func TestStatusesPruneOnlyOnFullPass(t *testing.T) {
+	api := newCountingAPI()
+	svc := newStatusService(api, t)
+	opts := StatusOptions{TTL: time.Hour}
+
+	svc.Statuses(context.Background(), []string{p1, p2, p3}, nil, opts, nil)
+
+	// p3 is gone from the inventory: a full pass prunes it.
+	svc.Statuses(context.Background(), []string{p1, p2}, nil,
+		StatusOptions{TTL: time.Hour, Prune: true}, nil)
+
+	cached, _, ok := cache.Get[map[string]StatusEntry](svc.Cache, statusCacheKey, cache.Forever)
+	if !ok {
+		t.Fatal("status cache missing after prune")
+	}
+	if _, stale := cached[p3]; stale {
+		t.Error("a full pass should prune pipelines that are no longer in the inventory")
+	}
+	if len(cached) != 2 {
+		t.Errorf("cache has %d entries, want p1 and p2", len(cached))
+	}
+
+	// A targeted refresh of p1 alone must leave p2 in place.
+	svc.Statuses(context.Background(), []string{p1}, nil,
+		StatusOptions{RefreshOnly: map[string]bool{p1: true}}, nil)
+	cached, _, _ = cache.Get[map[string]StatusEntry](svc.Cache, statusCacheKey, cache.Forever)
+	if _, ok := cached[p2]; !ok {
+		t.Error("a subset refresh must not prune the pipelines it did not cover")
+	}
+}
+
+// After a release the memoized history for those pipelines has to go: the
+// new run postdates it, and the memo TTL would otherwise hide it.
+func TestInvalidateExecutionsDropsMemo(t *testing.T) {
+	api := newCountingAPI()
+	svc := newStatusService(api, t)
+	svc.ExecutionsTTL = time.Hour
+	ctx := context.Background()
+
+	if _, err := svc.Executions(ctx, p1, 5, false); err != nil {
+		t.Fatalf("Executions: %v", err)
+	}
+	if _, err := svc.Executions(ctx, p1, 5, false); err != nil {
+		t.Fatalf("Executions: %v", err)
+	}
+	if api.callCount(p1) != 1 {
+		t.Fatalf("second call should hit the memo; got %d calls", api.callCount(p1))
+	}
+
+	svc.InvalidateExecutions([]string{p1})
+	if _, err := svc.Executions(ctx, p1, 5, false); err != nil {
+		t.Fatalf("Executions: %v", err)
+	}
+	if api.callCount(p1) != 2 {
+		t.Errorf("invalidated history should refetch; got %d calls", api.callCount(p1))
 	}
 }
 

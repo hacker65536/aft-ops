@@ -93,6 +93,9 @@ type TUI struct {
 type Metrics struct {
 	Enabled bool   `yaml:"enabled"`
 	Dir     string `yaml:"dir"`
+	// KeepRuns bounds how many per-run JSONL files are retained; older ones
+	// are pruned at startup. 0 keeps everything.
+	KeepRuns int `yaml:"keep_runs"`
 }
 
 // Default returns the built-in defaults (see docs/design.md §10).
@@ -119,7 +122,7 @@ func Default() Config {
 			SkipInProgress: true,
 		},
 		TUI:     TUI{PollInterval: Duration(30 * time.Second)},
-		Metrics: Metrics{Enabled: true, Dir: DefaultMetricsDir()},
+		Metrics: Metrics{Enabled: true, Dir: DefaultMetricsDir(), KeepRuns: 100},
 	}
 }
 

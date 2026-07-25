@@ -85,7 +85,7 @@ func Run[T, R any](
 	chunks := chunkIndexes(len(items), cfg.ChunkSize)
 	for ci, chunk := range chunks {
 		if ctx.Err() != nil {
-			markCancelled(ctx, results, chunk[0])
+			markCancelled(ctx, results, chunk[0], &done, &failed, notify)
 			return results
 		}
 		runChunk(ctx, cfg, limiter, items, results, chunk, fn, &done, &failed, notify)
@@ -94,7 +94,7 @@ func Run[T, R any](
 		if !last && cfg.ChunkPause > 0 {
 			select {
 			case <-ctx.Done():
-				markCancelled(ctx, results, chunks[ci+1][0])
+				markCancelled(ctx, results, chunks[ci+1][0], &done, &failed, notify)
 				return results
 			case <-time.After(cfg.ChunkPause):
 			}
@@ -116,9 +116,20 @@ func runChunk[T, R any](
 ) {
 	sem := make(chan struct{}, cfg.Concurrency)
 	var wg sync.WaitGroup
+	// Every item accounts for itself exactly once — including the ones that
+	// never run. A progress display that stops short of Total looks hung;
+	// a cancelled batch should visibly finish instead.
+	settle := func(i int, err error) {
+		results[i].Err = err
+		done.Add(1)
+		if err != nil {
+			failed.Add(1)
+		}
+		notify()
+	}
 	for _, idx := range chunk {
 		if ctx.Err() != nil {
-			results[idx].Err = ctx.Err()
+			settle(idx, ctx.Err())
 			continue
 		}
 		wg.Add(1)
@@ -129,28 +140,30 @@ func runChunk[T, R any](
 
 			if limiter != nil {
 				if err := limiter.Wait(ctx); err != nil {
-					results[i].Err = err
+					settle(i, err)
 					return
 				}
 			}
 			v, err := fn(ctx, items[i])
-			results[i].Value, results[i].Err = v, err
-			done.Add(1)
-			if err != nil {
-				failed.Add(1)
-			}
-			notify()
+			results[i].Value = v
+			settle(i, err)
 		}(idx)
 	}
 	wg.Wait()
 }
 
-func markCancelled[R any](ctx context.Context, results []Result[R], from int) {
+// markCancelled settles every not-yet-run item so the caller sees a complete
+// result set (and a progress count that reaches Total) after a cancellation.
+func markCancelled[R any](ctx context.Context, results []Result[R], from int,
+	done, failed *atomic.Int64, notify func()) {
 	for i := from; i < len(results); i++ {
 		if results[i].Err == nil {
 			results[i].Err = ctx.Err()
+			done.Add(1)
+			failed.Add(1)
 		}
 	}
+	notify()
 }
 
 // chunkIndexes splits [0,n) into chunks of size (0 = one chunk).

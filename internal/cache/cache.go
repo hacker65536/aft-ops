@@ -1,6 +1,7 @@
-// Package cache is a TTL'd JSON file cache for slowly-changing data
-// (account maps, pipeline inventories). Execution statuses are never
-// cached — freshness there is the whole point of the tool.
+// Package cache is a TTL'd JSON file cache for the data whose freshness the
+// tool can reason about: account maps, pipeline inventories, and per-entry
+// execution statuses (short TTL, in-flight entries always refetched — see
+// docs/design.md §7).
 //
 // Layout: <base>/<scope>/<key>.json where scope isolates AWS profiles so
 // that production and PoC orgs can never serve each other's data.
@@ -11,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,11 @@ import (
 )
 
 const schemaVersion = 1
+
+// Forever is a TTL that never expires. Use it for entries whose freshness is
+// tracked by the caller (the status cache stamps every entry individually) or
+// that have no notion of staleness at all (the recorded cache identity).
+const Forever = time.Duration(math.MaxInt64)
 
 // Store is a cache scoped to one AWS profile/region pair.
 type Store struct {

@@ -71,15 +71,20 @@ func TestSortByAccount(t *testing.T) {
 	eq(t, names(items), []string{"charlie", "bravo", "alpha"})
 }
 
+// Sorting by status ranks by urgency, not alphabetically: the point of the
+// view is triage, so Failed leads and Succeeded trails.
 func TestSortByStatus(t *testing.T) {
 	items := []PipelineSummary{
 		sumT("s", at("2026-01-01T00:00:00Z"), StatusSucceeded),
+		sumT("c", at("2026-01-01T00:00:00Z"), StatusCancelled),
 		sumT("f", at("2026-01-01T00:00:00Z"), StatusFailed),
 		sumT("i", at("2026-01-01T00:00:00Z"), StatusInProgress),
 	}
 	SortSummaries(items, SortByStatus, OrderAsc)
-	// alphabetical: Failed < InProgress < Succeeded
-	eq(t, names(items), []string{"f", "i", "s"})
+	eq(t, names(items), []string{"f", "i", "c", "s"})
+
+	SortSummaries(items, SortByStatus, OrderDesc)
+	eq(t, names(items), []string{"s", "c", "i", "f"})
 }
 
 // Message unwraps the CodeConnections JSON RevisionSummary and falls back

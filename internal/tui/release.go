@@ -30,6 +30,12 @@ type releaseDoneMsg struct {
 	err     error
 }
 
+// targetsCheckedMsg carries the re-fetched status of the selected targets.
+type targetsCheckedMsg struct {
+	items []model.PipelineSummary
+	err   error
+}
+
 // releaseModel is the multi-select release screen. It shows the selected
 // targets and the guard verdict (confirm), runs the batch with progress
 // (running), then the per-target results (done). Release goes through the
@@ -37,10 +43,12 @@ type releaseDoneMsg struct {
 type releaseModel struct {
 	ctx     context.Context
 	run     ReleaseFunc
+	refresh Refresh
 	targets []model.PipelineSummary
 	limit   int
 
 	phase      releasePhase
+	checking   bool // re-fetching the targets' current status
 	vp         viewport.Model
 	spin       spinner.Model
 	progress   batch.Progress
@@ -55,16 +63,37 @@ type releaseModel struct {
 // gets the rest.
 const releaseChrome = 4
 
-func newReleaseModel(ctx context.Context, run ReleaseFunc, targets []model.PipelineSummary, limit, w, h int) releaseModel {
+func newReleaseModel(ctx context.Context, run ReleaseFunc, refresh Refresh,
+	targets []model.PipelineSummary, limit, w, h int) releaseModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	m := releaseModel{
-		ctx: ctx, run: run, targets: targets, limit: limit,
-		phase: phaseConfirm, spin: sp, width: w, height: h,
+		ctx: ctx, run: run, refresh: refresh, targets: targets, limit: limit,
+		phase: phaseConfirm, checking: refresh != nil, spin: sp, width: w, height: h,
 	}
 	m.vp = viewport.New(max(1, w), max(1, h-releaseChrome))
 	m.vp.SetContent(renderSummaries(targets))
 	return m
+}
+
+// Init re-fetches the selected targets' status before the operator confirms.
+// The list they were picked from is served from a cache that is minutes old
+// by design, and status decides both what is shown here and which targets
+// the core's in-progress guard skips — so it has to be current at the moment
+// of the decision, not at the moment of selection.
+func (m releaseModel) Init() tea.Cmd {
+	if m.refresh == nil {
+		return nil
+	}
+	ctx, refresh := m.ctx, m.refresh
+	names := make([]string, len(m.targets))
+	for i, t := range m.targets {
+		names[i] = t.PipelineName
+	}
+	return tea.Batch(m.spin.Tick, func() tea.Msg {
+		items, err := refresh(ctx, names, nil)
+		return targetsCheckedMsg{items: items, err: err}
+	})
 }
 
 // overLimit reports whether the target count trips the guard.
@@ -72,14 +101,32 @@ func (m releaseModel) overLimit() bool {
 	return m.limit > 0 && len(m.targets) > m.limit
 }
 
-func (m releaseModel) Init() tea.Cmd { return nil }
-
 func (m releaseModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.vp.Width = msg.Width
 		m.vp.Height = max(1, msg.Height-releaseChrome)
+		return m, nil
+
+	case targetsCheckedMsg:
+		m.checking = false
+		if msg.err != nil {
+			// Keep the selection and say so: releasing on stale status is a
+			// judgement call for the operator, not something to hide.
+			m.err = fmt.Errorf("could not refresh target status: %w", msg.err)
+			return m, nil
+		}
+		byName := make(map[string]model.PipelineSummary, len(msg.items))
+		for _, it := range msg.items {
+			byName[it.PipelineName] = it
+		}
+		for i, t := range m.targets {
+			if u, ok := byName[t.PipelineName]; ok {
+				m.targets[i] = u
+			}
+		}
+		m.vp.SetContent(renderSummaries(m.targets))
 		return m, nil
 
 	case progressMsg:
@@ -95,7 +142,7 @@ func (m releaseModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.phase != phaseRunning {
+		if m.phase != phaseRunning && !m.checking {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -113,8 +160,8 @@ func (m releaseModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 	case phaseConfirm:
 		switch msg.String() {
 		case "y", "enter":
-			if m.overLimit() {
-				return m, nil // guard blocks confirmation
+			if m.overLimit() || m.checking {
+				return m, nil // guard (or the pending status check) blocks it
 			}
 			return m.begin()
 		case "n", "q", "esc":
@@ -168,18 +215,28 @@ func (m releaseModel) View() string {
 
 	switch m.phase {
 	case phaseConfirm:
-		b.WriteString(titleStyle.Render(fmt.Sprintf("release %d pipeline(s)?", len(m.targets))) + "\n")
-		if m.overLimit() {
+		head := titleStyle.Render(fmt.Sprintf("release %d pipeline(s)?", len(m.targets)))
+		if m.checking {
+			head += "  " + m.spin.View() + dimStyle.Render(" checking current status…")
+		}
+		b.WriteString(head + "\n")
+		switch {
+		case m.overLimit():
 			b.WriteString(errStyle.Render(fmt.Sprintf(
 				"exceeds guard limit of %d — deselect %d to proceed",
 				m.limit, len(m.targets)-m.limit)) + "\n")
-		} else {
+		case m.err != nil:
+			b.WriteString(errStyle.Render(m.err.Error()) + "\n")
+		default:
 			b.WriteString(dimStyle.Render("this triggers StartPipelineExecution on each target") + "\n")
 		}
 		b.WriteString(m.vp.View() + "\n")
-		if m.overLimit() {
+		switch {
+		case m.overLimit():
 			b.WriteString(dimStyle.Render("over limit · n/esc cancel"))
-		} else {
+		case m.checking:
+			b.WriteString(dimStyle.Render("checking… · n/esc cancel"))
+		default:
 			b.WriteString(dimStyle.Render("y/enter release · n/esc cancel"))
 		}
 

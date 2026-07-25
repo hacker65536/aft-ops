@@ -77,7 +77,7 @@ func releaseTargets(n int) []model.PipelineSummary {
 
 // The guard blocks confirmation when targets exceed the limit.
 func TestReleaseGuardBlocksOverLimit(t *testing.T) {
-	m := newReleaseModel(context.Background(), nil, releaseTargets(2), 1, 80, 24)
+	m := newReleaseModel(context.Background(), nil, nil, releaseTargets(2), 1, 80, 24)
 	if !m.overLimit() {
 		t.Fatal("2 targets over a limit of 1 should be over limit")
 	}
@@ -92,7 +92,7 @@ func TestReleaseGuardBlocksOverLimit(t *testing.T) {
 
 // n cancels the confirm and pops back.
 func TestReleaseCancelPops(t *testing.T) {
-	m := newReleaseModel(context.Background(), nil, releaseTargets(1), 50, 80, 24)
+	m := newReleaseModel(context.Background(), nil, nil, releaseTargets(1), 50, 80, 24)
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	if cmd == nil {
 		t.Fatal("n should return a command")
@@ -112,7 +112,7 @@ func TestReleaseConfirmRunDone(t *testing.T) {
 			{PipelineName: alphaPipeline, ExecutionID: "exec-1"},
 		}, nil
 	}
-	m := newReleaseModel(context.Background(), run, releaseTargets(1), 50, 80, 24)
+	m := newReleaseModel(context.Background(), run, nil, releaseTargets(1), 50, 80, 24)
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	m = next.(releaseModel)

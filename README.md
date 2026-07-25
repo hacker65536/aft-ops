@@ -6,7 +6,7 @@ customizations pipelines at a glance, find where they fail, and trigger
 Release changes — with rate-limit-aware batching, caching, and both a
 scriptable CLI and an interactive TUI.
 
-> Status: early development (Phase 1). See [docs/requirements.md](docs/requirements.md)
+> Status: early development. See [docs/requirements.md](docs/requirements.md)
 > and [docs/design.md](docs/design.md).
 
 ## Quick start
@@ -23,12 +23,27 @@ go build -o aft-ops ./cmd/aft-ops
 # failed ones only, as JSON (stable schema for automation / AI agents)
 ./aft-ops pipeline list --status Failed -o json
 
+# keep watching while something is running
+./aft-ops pipeline list --watch --interval 30s
+
+# drill into one pipeline
+./aft-ops pipeline show my-account
+./aft-ops pipeline executions my-account --actions
+./aft-ops pipeline logs my-account --execution <execution-id> --summary
+
 # re-release everything that failed (dry-run first)
 ./aft-ops pipeline release --status Failed --dry-run
 ./aft-ops pipeline release --status Failed
 
 # analyze API call rates / throttling from recorded metrics
 ./aft-ops metrics show
+```
+
+Every command that talks to AWS first prints the target it resolved to, so a
+stray `AWS_PROFILE` can never send an operation to the wrong account:
+
+```
+aws: account 123456789012 · region ap-northeast-1 · profile my-aft-management-profile
 ```
 
 ## TUI
@@ -49,7 +64,11 @@ Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
 - Actions show each action's terraform verdict (`Apply complete! ...` /
   `Error: ...`) fetched lazily from its build log, with plan-colored counts
 - `space` multi-select + `x` triggers batch Release change (guarded by
-  `release.max_targets`)
+  `release.max_targets`); the confirm screen re-checks the targets' current
+  status before you commit
+- While any pipeline is running, the list auto-refreshes just those rows every
+  `tui.poll_interval` (default 30s, `0` disables it) and stops once everything
+  is terminal
 - Immutable data (completed builds' logs, finished executions' actions) is
   cached in-session; execution history is served within
   `cache.executions_ttl` (default 15m) — `r`/`R` force a refresh
@@ -67,11 +86,23 @@ batch:
   concurrency: 10
   rps: 8
 
+cache:
+  status_ttl: 10m        # latest-status cache; 0 = always fan out
+  executions_ttl: 15m    # in-session execution-history memo
+
 release:
   max_targets: 50
   skip_in_progress: true
+
+tui:
+  poll_interval: 30s     # auto-refresh of running pipelines (also --watch's default)
 ```
+
+Release operations never trust the status cache: `--status` refetches the
+whole inventory before deciding what to release, and explicitly named targets
+are refetched individually, so neither the selection nor the in-progress skip
+is made on minutes-old data.
 
 ## License
 
-TBD (planned: MIT).
+[MIT](LICENSE)

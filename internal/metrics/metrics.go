@@ -31,17 +31,37 @@ type Recorder struct {
 	path string
 }
 
-// NewRecorder creates the metrics directory and opens a new JSONL file.
-func NewRecorder(dir string) (*Recorder, error) {
+// NewRecorder creates the metrics directory and opens a new JSONL file,
+// pruning older runs down to keepRuns files (0 = keep everything). Every
+// invocation of the tool writes one file, so an unbounded directory would
+// grow by hundreds of files a month.
+func NewRecorder(dir string, keepRuns int) (*Recorder, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create metrics dir: %w", err)
 	}
+	prune(dir, keepRuns)
 	path := filepath.Join(dir, time.Now().Format("20060102_150405")+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open metrics file: %w", err)
 	}
 	return &Recorder{f: f, enc: json.NewEncoder(f), path: path}, nil
+}
+
+// prune keeps the newest keepRuns-1 files, leaving room for the run that is
+// about to start. Removal failures are ignored: pruning must never break an
+// operation.
+func prune(dir string, keepRuns int) {
+	if keepRuns <= 0 {
+		return
+	}
+	paths, err := LatestFiles(dir, 0)
+	if err != nil {
+		return
+	}
+	for i := keepRuns - 1; i < len(paths); i++ {
+		_ = os.Remove(paths[i])
+	}
 }
 
 // Record appends one entry. Failures to record are ignored: metrics must

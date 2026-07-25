@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hacker65536/aft-ops/internal/core/model"
 )
@@ -133,36 +134,24 @@ func PipelineCounts(w io.Writer, items []model.PipelineSummary) {
 }
 
 // StatusFreshness prints how fresh the listed statuses are: how many were
-// just refetched versus served from cache, and the age of the oldest cached
-// entry. Companion to PipelineCounts on stderr; makes staleness visible now
-// that statuses are cached.
-func StatusFreshness(w io.Writer, items []model.PipelineSummary, ttl time.Duration) {
-	if len(items) == 0 {
+// just refetched versus served from cache, the age of the oldest cached
+// entry, and how many refreshes failed (those keep serving their previous
+// value, so without this line the failure would be invisible). Companion to
+// PipelineCounts on stderr; the numbers come from the core, not from
+// guessing at timestamps.
+func StatusFreshness(w io.Writer, stats model.StatusStats) {
+	if stats.Fetched == 0 && stats.FromCache == 0 && stats.Failed == 0 {
 		return
 	}
-	fresh, cached := 0, 0
-	var oldest time.Time
-	now := time.Now()
-	for _, p := range items {
-		if p.StatusFetchedAt == nil {
-			continue
-		}
-		age := now.Sub(*p.StatusFetchedAt)
-		if age <= 2*time.Second {
-			fresh++
-		} else {
-			cached++
-			if oldest.IsZero() || p.StatusFetchedAt.Before(oldest) {
-				oldest = *p.StatusFetchedAt
-			}
-		}
+	msg := fmt.Sprintf("statuses: %d refetched", stats.Fetched)
+	if stats.FromCache > 0 {
+		msg += fmt.Sprintf(", %d from cache (oldest %s ago, ttl %s)",
+			stats.FromCache, humanDuration(time.Since(stats.Oldest)), humanDuration(stats.TTL))
 	}
-	if cached == 0 {
-		fmt.Fprintf(w, "statuses: %d refetched\n", fresh)
-		return
+	if stats.Failed > 0 {
+		msg += fmt.Sprintf(" · %d refetch(es) failed, previous values kept", stats.Failed)
 	}
-	fmt.Fprintf(w, "statuses: %d refetched, %d from cache (oldest %s ago, ttl %s)\n",
-		fresh, cached, humanDuration(now.Sub(oldest)), humanDuration(ttl))
+	fmt.Fprintln(w, msg)
 }
 
 // ReleaseTable renders release results.
@@ -192,6 +181,52 @@ func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
 			name = "-"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, r.AccountID, result, detail)
+	}
+	tw.Flush()
+}
+
+// ExecutionTable renders `pipeline executions` rows: one pipeline's runs,
+// newest first.
+func ExecutionTable(w io.Writer, items []model.Execution, color bool) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "EXECUTION\tSTATUS\tSTARTED\tDURATION\tREVISION")
+	for _, e := range items {
+		started, duration := "-", "-"
+		if e.StartTime != nil {
+			started = humanTime(*e.StartTime)
+			if e.LastUpdate != nil {
+				duration = e.LastUpdate.Sub(*e.StartTime).Truncate(time.Second).String()
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			e.ID, styleStatus(e.Status, color), started, duration, revisionSummary(e.Revisions))
+	}
+	tw.Flush()
+}
+
+// ActionExecutionTable renders one execution's per-action runs, including the
+// CodeBuild id that `pipeline logs --build` takes.
+func ActionExecutionTable(w io.Writer, items []model.ActionExecution, color bool) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "  STAGE\tACTION\tSTATUS\tDURATION\tBUILD\tDETAIL")
+	for _, a := range items {
+		duration := "-"
+		if d := a.Duration(); d > 0 {
+			duration = d.Truncate(time.Second).String()
+		}
+		build := a.CodeBuildID
+		if build == "" {
+			build = "-"
+		}
+		detail := "-"
+		switch {
+		case a.ErrorMessage != "":
+			detail = truncate(a.ErrorMessage, 60)
+		case a.Summary != "":
+			detail = truncate(a.Summary, 60)
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n",
+			a.StageName, a.ActionName, styleStatus(a.Status, color), duration, build, detail)
 	}
 	tw.Flush()
 }
@@ -268,12 +303,16 @@ func revisionSummary(revs []model.Revision) string {
 	return shortID(r.RevisionID)
 }
 
+// truncate clips s to n terminal cells, appending an ellipsis when it had to
+// cut. Both the measurement and the cut are display-width aware: byte
+// slicing would split a multi-byte rune (commit messages and account names
+// are routinely non-ASCII) and emit invalid UTF-8.
 func truncate(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
+	if n <= 0 || ansi.StringWidth(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return ansi.Truncate(s, n, "…")
 }
 
 // AccountTable renders `account list`.

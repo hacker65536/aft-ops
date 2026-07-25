@@ -54,8 +54,9 @@ func runTUI(ctx context.Context, app *App) error {
 			TTL:             app.Cfg.Cache.StatusTTL.D(),
 			RefreshAll:      refresh,
 			RefreshInFlight: true,
+			Prune:           true, // this pass covers the whole inventory
 		}
-		summaries := svc.Statuses(ctx, names, resolver, opts, onProgress)
+		summaries, _ := svc.Statuses(ctx, names, resolver, opts, onProgress)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -77,7 +78,7 @@ func runTUI(ctx context.Context, app *App) error {
 		for _, n := range names {
 			only[n] = true
 		}
-		summaries := svc.Statuses(ctx, names, resolver,
+		summaries, _ := svc.Statuses(ctx, names, resolver,
 			pipeline.StatusOptions{RefreshOnly: only}, onProgress)
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -157,11 +158,16 @@ func runTUI(ctx context.Context, app *App) error {
 			}
 		}
 		_ = svc.InvalidateStatuses(started)
+		svc.InvalidateExecutions(started)
 		if err := ctx.Err(); err != nil {
 			return results, err
 		}
 		return results, nil
 	}
+
+	// Resolve (and announce) the target account before the alternate screen
+	// takes over — inside the TUI, stderr is off-limits.
+	account := app.Identity(ctx)
 
 	deps := tui.Deps{
 		Fetch:        fetch,
@@ -172,6 +178,9 @@ func runTUI(ctx context.Context, app *App) error {
 		Logs:         logsFn,
 		Release:      release,
 		ReleaseLimit: app.Cfg.Release.MaxTargets,
+		PollInterval: app.Cfg.TUI.PollInterval.D(),
+		Account:      account,
+		Region:       app.Cfg.Region,
 	}
 	if err := tui.Run(ctx, deps); err != nil {
 		return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}

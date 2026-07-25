@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -102,6 +103,89 @@ func TestRefreshedMsgMergesInPlace(t *testing.T) {
 	}
 	if got != model.StatusInProgress {
 		t.Errorf("selected row status = %q, want InProgress after merge", got)
+	}
+}
+
+// Auto-polling only arms while something is actually running: a list of
+// terminal rows cannot change on its own, so the tool must go quiet.
+func TestPollArmsOnlyWithInFlightRows(t *testing.T) {
+	refresh := func(context.Context, []string, func(batch.Progress)) ([]model.PipelineSummary, error) {
+		return nil, nil
+	}
+	m := newModel(context.Background(), Deps{Refresh: refresh, PollInterval: time.Minute})
+	m.items = []model.PipelineSummary{
+		sum("111111111111-customizations-pipeline", "111111111111", "alpha", model.StatusSucceeded),
+	}
+	if cmd := (&m).schedulePoll(); cmd != nil {
+		t.Error("an all-terminal list should not arm a poll")
+	}
+
+	m.items = append(m.items,
+		sum("222222222222-customizations-pipeline", "222222222222", "bravo", model.StatusInProgress))
+	cmd := (&m).schedulePoll()
+	if cmd == nil {
+		t.Fatal("an in-flight row should arm a poll")
+	}
+	if !m.pollArmed {
+		t.Error("arming a poll should set pollArmed")
+	}
+	if second := (&m).schedulePoll(); second != nil {
+		t.Error("only one poll tick may be in flight at a time")
+	}
+}
+
+// A poll tick refreshes just the running pipelines.
+func TestPollMsgRefreshesInFlightOnly(t *testing.T) {
+	called := make(chan []string, 1)
+	refresh := func(_ context.Context, names []string, _ func(batch.Progress)) ([]model.PipelineSummary, error) {
+		called <- names
+		return nil, nil
+	}
+	m := newModel(context.Background(), Deps{Refresh: refresh, PollInterval: time.Minute})
+	m.items = []model.PipelineSummary{
+		sum("111111111111-customizations-pipeline", "111111111111", "alpha", model.StatusSucceeded),
+		sum("222222222222-customizations-pipeline", "222222222222", "bravo", model.StatusInProgress),
+	}
+	(&m).applyFilter()
+	m.pollArmed = true
+
+	next, cmd := m.Update(pollMsg{})
+	nm := next.(uiModel)
+	if nm.pollArmed {
+		t.Error("handling the tick should clear pollArmed")
+	}
+	if !nm.loading || cmd == nil {
+		t.Fatal("a poll tick with in-flight rows should start a refresh")
+	}
+
+	// The refresh arrives as a tea.Batch; its members are run concurrently by
+	// the runtime (one of them blocks on the progress channel until the fetch
+	// closes it), so drive them the same way here.
+	msgs, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected a batched command, got %T", cmd())
+	}
+	for _, c := range msgs {
+		go c()
+	}
+	select {
+	case names := <-called:
+		if len(names) != 1 || names[0] != "222222222222-customizations-pipeline" {
+			t.Errorf("polled names = %v, want only the in-flight pipeline", names)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the poll tick never called Refresh")
+	}
+}
+
+// Polling is off unless an interval was configured.
+func TestPollDisabledWithoutInterval(t *testing.T) {
+	m := testModel(t, func(context.Context, []string, func(batch.Progress)) ([]model.PipelineSummary, error) {
+		return nil, nil
+	})
+	m.items[0].Latest.Status = model.StatusInProgress
+	if cmd := (&m).schedulePoll(); cmd != nil {
+		t.Error("PollInterval 0 must disable auto-refresh")
 	}
 }
 

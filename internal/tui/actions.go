@@ -62,12 +62,12 @@ type actionsLoadedMsg struct {
 	err     error
 }
 
-// verdictMsg carries one build's lazily-fetched terraform verdict line
-// ("Apply complete! ..." / "Error: ..."), keyed by build id. An empty
-// verdict (fetch failed or no terraform ran) leaves the summary as-is.
-type verdictMsg struct {
-	buildID string
-	verdict string
+// verdictsMsg carries the lazily-fetched terraform verdict lines
+// ("Apply complete! ..." / "Error: ...") keyed by build id. Builds whose
+// fetch failed, or that ran no terraform, are simply absent and keep the
+// API's own summary.
+type verdictsMsg struct {
+	verdicts map[string]string
 }
 
 // actionsModel is the action list screen: the per-action runs of one
@@ -162,14 +162,16 @@ func (m actionsModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		m.err = nil
 		m.actions = msg.actions
 		m.setRows()
-		return m, m.verdictCmds()
+		return m, m.verdictCmd()
 
-	case verdictMsg:
-		if msg.verdict != "" {
+	case verdictsMsg:
+		if len(msg.verdicts) > 0 {
 			if m.verdicts == nil {
 				m.verdicts = map[string]string{}
 			}
-			m.verdicts[msg.buildID] = msg.verdict
+			for id, v := range msg.verdicts {
+				m.verdicts[id] = v
+			}
 		}
 		return m, nil
 
@@ -203,29 +205,45 @@ func (m actionsModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 	return m, cmd
 }
 
-// verdictCmds spawns one background fetch per terminal CodeBuild action to
-// pull its log and extract the terraform verdict line. Fetch errors are
-// swallowed (the summary just stays as the API's) and completed builds land
-// in the log memo, doubling as a prefetch for the log screen.
-func (m actionsModel) verdictCmds() tea.Cmd {
+// verdictCmd fetches each terminal CodeBuild action's log in the background
+// and extracts its terraform verdict line. Fetch errors are swallowed (the
+// summary just stays as the API's) and completed builds land in the log memo,
+// so this doubles as a prefetch for the log screen.
+//
+// The builds are walked one at a time on purpose: fanning them out would put
+// concurrent log requests outside the batch engine's rate control, which is
+// the one place this tool is supposed to decide how hard it hits the API.
+// An execution has a handful of actions, so serial costs a moment at most.
+func (m actionsModel) verdictCmd() tea.Cmd {
 	if m.logs == nil {
 		return nil
 	}
-	var cmds []tea.Cmd
+	var ids []string
 	for _, a := range m.actions {
-		if a.CodeBuildID == "" || !a.Status.Terminal() {
-			continue
+		if a.CodeBuildID != "" && a.Status.Terminal() {
+			ids = append(ids, a.CodeBuildID)
 		}
-		ctx, load, id := m.ctx, m.logs, a.CodeBuildID
-		cmds = append(cmds, func() tea.Msg {
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	ctx, load := m.ctx, m.logs
+	return func() tea.Msg {
+		out := make(map[string]string, len(ids))
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				break
+			}
 			lines, err := load(ctx, id)
 			if err != nil {
-				return verdictMsg{buildID: id}
+				continue
 			}
-			return verdictMsg{buildID: id, verdict: logs.Verdict(lines)}
-		})
+			if v := logs.Verdict(lines); v != "" {
+				out[id] = v
+			}
+		}
+		return verdictsMsg{verdicts: out}
 	}
-	return tea.Batch(cmds...)
 }
 
 // selectedAction returns the action under the cursor, or nil.
@@ -272,18 +290,11 @@ func (m actionsModel) detailLines() (summary, errMsg string) {
 	if a == nil {
 		return "", ""
 	}
-	clip := func(s string) string {
-		s = strings.SplitN(s, "\n", 2)[0]
-		if m.width > 3 && len(s) > m.width {
-			return s[:m.width-1] + "…"
-		}
-		return s
-	}
 	summary = a.Summary
 	if v := m.verdicts[a.CodeBuildID]; v != "" {
 		summary = v
 	}
-	return clip(summary), clip(a.ErrorMessage)
+	return clipToWidth(summary, m.width), clipToWidth(a.ErrorMessage, m.width)
 }
 
 func (m actionsModel) View() string {

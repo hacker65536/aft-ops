@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hacker65536/aft-ops/internal/core/model"
 )
@@ -304,7 +305,7 @@ func (m execsModel) revisionLines() []string {
 			if i == execsRevLines {
 				break
 			}
-			nameW = max(nameW, len(r.ActionName))
+			nameW = max(nameW, ansi.StringWidth(r.ActionName))
 		}
 		for _, r := range revs {
 			if len(lines) == execsRevLines {
@@ -312,10 +313,7 @@ func (m execsModel) revisionLines() []string {
 			}
 			msg := strings.SplitN(r.Message(), "\n", 2)[0]
 			s := fmt.Sprintf("%-*s  %s  %s", nameW, r.ActionName, shortHash(r.RevisionID), msg)
-			if m.width > 3 && len(s) > m.width {
-				s = s[:m.width-1] + "…"
-			}
-			lines = append(lines, s)
+			lines = append(lines, clipToWidth(s, m.width))
 		}
 	}
 	for len(lines) < execsRevLines {

@@ -131,8 +131,11 @@ type StageState struct {
 2. status cache を参照し、TTL 内のエントリはキャッシュから供給。
    TTL 超・未取得・実行中(InProgress/Stopping)のパイプラインだけ Batch Engine で
    ListPipelineExecutions(maxResults=1) を再取得（GetPipelineState は詳細画面のみ）
-3. 取得結果を status cache にマージ保存。Account 解決を合成して PipelineSummary[] を返す
-4. renderer が table / json で出力。status の鮮度（refetched/from-cache・最古経過）を stderr に明示
+3. 取得結果を status cache にマージ保存（全件パス時は消滅パイプラインを prune）。
+   Account 解決を合成して PipelineSummary[] + StatusStats を返す
+4. renderer が table / json で出力。status の鮮度（refetched/from-cache 件数・最古経過・
+   refetch 失敗件数）を stderr に明示。件数はコアが返す `model.StatusStats` をそのまま使い、
+   表示層でタイムスタンプから推測しない
 ```
 
 - **最新実行ステータスは per-entry（パイプライン名ごと）で短 TTL キャッシュする**（既定 `status_ttl: 10m`）。
@@ -163,6 +166,7 @@ terraform ログ抽出（`core/logs`）:
 
 ```
 対象決定（名前/アカウント指定・--status Failed・--file/stdin）
+→ 対象の status を再取得（下記）
 → dry-run 表示（対象一覧 + 件数）
 → 確認プロンプト（--yes でスキップ、件数 > limit なら拒否）
 → Batch Engine で StartPipelineExecution
@@ -171,6 +175,10 @@ terraform ログ抽出（`core/logs`）:
 
 - 既定の安全ガード: `max_release_targets: 50`（設定で変更可）。超過時は `--force-limit` 相当の明示が必要
 - 冪等性: 実行中 (InProgress) のパイプラインは既定でスキップ（`--include-in-progress` で上書き）
+- **release は status キャッシュに依存しない**: status は「`--status` がどれを選ぶか」と
+  「InProgress スキップがどれを飛ばすか」の 2 つを決めるため、`status_ttl`（既定 10m）だけ
+  古いデータで書き込みを判断させない。`--status` 指定時は全件を強制再取得、明示ターゲット時は
+  その対象だけ再取得してから確認に進む。TUI の Release 画面も confirm 前に対象を再取得する
 
 ## 5. 逐次バッチエンジン（internal/batch）
 
@@ -254,16 +262,18 @@ aft-ops tui                      # 明示的 TUI 起動
 aft-ops pipeline list            # F1: 状態一覧（alias: pl ls）。status は TTL 内キャッシュ供給
     --status Failed,InProgress   # ステータスフィルタ
     --account <name|id|部分一致>
-    --sort last-update|status|account  # 既定 last-update
+    --sort last-update|status|account  # 既定 last-update（status は重大度順: Failed → … → Succeeded）
     --order asc|desc             # 既定 desc（未実行=時間なしは常に末尾）
     --refresh                    # 全 status を強制再取得（inventory/accounts も）
-    --watch                      # 定期再取得（簡易ウォッチ）
+    --watch [--interval 30s]     # 定期再取得（既定間隔は tui.poll_interval）。table 出力専用
 aft-ops pipeline refresh <target...>  # 指定パイプラインの status だけ再取得しキャッシュ更新
 aft-ops pipeline show <target>   # F2: 詳細（ステージ/実行履歴）
+aft-ops pipeline executions <target>  # F2: 実行履歴一覧（alias: execs）
+    [--limit 25] [--actions]     # --actions は各実行のアクション（CodeBuild id 付き）も展開
 aft-ops pipeline logs <target>   # F2: CodeBuild/terraform ログ
-    [--execution <id>] [--raw|--summary]
+    [--execution <id>] [--build <id>] [--raw|--summary]
 aft-ops pipeline release [targets...]   # F3: Release change
-    --status Failed              # フィルタ結果を対象に
+    --status Failed              # フィルタ結果を対象に（対象決定時に status を強制再取得）
     --file targets.txt | -       # 明示リスト（stdin 可）
     --dry-run / --yes
     --concurrency N --chunk-size N --chunk-pause 30s
@@ -367,9 +377,14 @@ CodePipeline の実データモデル（pipeline → executions → action execu
 - ルートモデルが画面スタックを管理（push/pop）。各画面は独立した `tea.Model`（`screen` interface）。
   ナビゲーションは `pushMsg`/`popMsg` をルートが解釈し、それ以外はスタック最上位へ委譲。
   リサイズは push/pop 時に最上位へ再配送。TUI への依存注入は `tui.Deps`（Fetch/Refresh/Detail/
-  Executions/Actions/Logs/Release/ReleaseLimit）に集約
-- 一覧はロード中も操作可能: キャッシュ済み情報を即表示 → バッチ取得の進捗に応じて行を逐次更新（batch の Progress chan を `tea.Cmd` で購読）
-- 実行中パイプラインがある場合は自動ポーリング（間隔は設定、既定 30s）※未実装（Phase 3 候補）
+  Executions/Actions/Logs/Release/ReleaseLimit/PollInterval/Account/Region）に集約。
+  接続先アカウント・region は一覧ヘッダに表示（TUI は stderr のバナーを使えないため）
+- ロード中はスピナー + 進捗件数（batch の Progress chan を `tea.Cmd` で購読）を表示し、
+  再取得時は既存の行を表示したまま更新する。初回ロードのみ行が空（status キャッシュヒット時は
+  ほぼ即時に埋まる）。行単位の逐次描画は行っていない
+- **実行中パイプラインの自動ポーリング（実装済み）**: `tui.poll_interval`（既定 30s、0 で無効）
+  ごとに **in-flight の行だけ** RefreshOnly で再取得する。終端状態の行は自ら変化しないので
+  対象にせず、in-flight が 0 件になるとポーリング自体が止まる（tick は常に 1 本だけ）
 - multi-select → 一括 release（確認ダイアログに件数・対象を明示、F5 ガードは CLI と共通のコア層で実施）
 
 ### 9.2 CLI との整合
@@ -404,11 +419,28 @@ release:
   skip_in_progress: true
 
 tui:
-  poll_interval: 30s
+  poll_interval: 30s   # TUI の in-flight 自動再取得間隔 / `pipeline list --watch` の既定間隔
+
+metrics:
+  enabled: true
+  keep_runs: 100       # 保持する実行ごとの JSONL 件数（0 で無制限）
 ```
 
 - プロファイルは AWS SDK 標準のクレデンシャルチェーンに委譲（ツールは認証情報を保持しない）
 - 読み取り/書き込みでプロファイルを分けたい場合に備え `write_profile`（任意、未指定なら `profile` を使用）を用意
+- **接続先の明示（取り違え防止）**: AWS に触れるコマンドは `aws: account <id> · region <r> ·
+  profile <p>` を stderr に 1 行出す。profile 未設定時は「環境のクレデンシャルチェーンを
+  使っている」旨を併記する（cache scope は profile+region 由来なので、profile 無指定だと
+  日によって別アカウントを指しうる）。identity は cache scope に記録し、**記録と異なる
+  identity を検出したら警告して当該 scope を破棄する**（別アカウントのデータを供給しない）。
+  検証コスト（クレデンシャル解決 + STS で約 0.6s）とキャッシュヒット時の応答（0.02s）の
+  釣り合いから、実際に `sts:GetCallerIdentity` を呼ぶのは次の場合:
+  - profile 未設定（＝環境依存で最も危険なケース）
+  - 記録が無い / 24h より古い
+  - `--refresh`（記録もキャッシュの一種として再検証する）
+  - **書き込み系（`WriteAWS`）は常に検証**し、確認プロンプトの直前に出す
+  記録を再利用した場合はバナーに `(identity from cache; --refresh re-checks)` を付け、
+  **その run で検証していないことを表示上も区別する**（バナーが誤った安心を与えないため）
 
 ## 11. テスト戦略
 
@@ -441,6 +473,6 @@ tui:
 |---|---|---|
 | ~~D1~~ | ~~リポジトリ~~ | **解決済**: 新規リポジトリ `aft-ops` で開始。既存 Bash ツールセットは資産として残し移行後アーカイブ |
 | ~~D2~~ | ~~既定リージョン~~ | **解決済**: `ap-northeast-1` |
-| D3 | `aft-request-metadata` テーブルのスキーマ確認 | Phase 1 着手時に実環境で確認 |
+| ~~D3~~ | ~~`aft-request-metadata` テーブルのスキーマ確認~~ | **解決済**: 実テーブルで検証し `core/account` を実スキーマに追従済み |
 | D4 | TUI のログ画面で CloudWatch Logs Live Tail を使うか | Phase 2 で判断（ポーリングで十分な可能性） |
 | D5 | 設定実装 | **解決済**: YAML 単一フォーマット・`yaml.v3` + 自前マージ（viper は依存過多のため不採用） |

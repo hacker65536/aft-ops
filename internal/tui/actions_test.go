@@ -117,7 +117,7 @@ func TestActionsBackPops(t *testing.T) {
 }
 
 // Loading the action list triggers a background verdict fetch for the
-// terminal CodeBuild action, and the resulting verdictMsg replaces the
+// terminal CodeBuild action, and the resulting verdictsMsg replaces the
 // selected action's summary line.
 func TestActionsVerdictFlow(t *testing.T) {
 	logsFn := func(context.Context, string) ([]string, error) {
@@ -132,12 +132,12 @@ func TestActionsVerdictFlow(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("loaded actions with a LogsFunc should trigger a verdict fetch")
 	}
-	vm, ok := cmd().(verdictMsg)
+	vm, ok := cmd().(verdictsMsg)
 	if !ok {
-		t.Fatalf("verdict fetch should emit verdictMsg, got %T", cmd())
+		t.Fatalf("verdict fetch should emit verdictsMsg, got %T", cmd())
 	}
-	if vm.buildID != "proj:uuid" || !strings.HasPrefix(vm.verdict, "Apply complete!") {
-		t.Fatalf("verdictMsg = %+v", vm)
+	if !strings.HasPrefix(vm.verdicts["proj:uuid"], "Apply complete!") {
+		t.Fatalf("verdictsMsg = %+v", vm)
 	}
 
 	next, _ = m.Update(vm)

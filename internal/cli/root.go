@@ -15,6 +15,9 @@ import (
 // in main.
 func Execute(ctx context.Context) error {
 	app := &App{}
+	// Close from here rather than PersistentPostRun only: cobra skips the
+	// Post hooks when a command returns an error.
+	defer app.closeMetrics()
 
 	var (
 		cfgPath     string
@@ -58,9 +61,6 @@ func Execute(ctx context.Context) error {
 			app.Format = f
 			app.initMetrics()
 			return nil
-		},
-		PersistentPostRun: func(*cobra.Command, []string) {
-			app.closeMetrics()
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// bare `aft-ops` launches the TUI
