@@ -387,8 +387,10 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 		} else {
 			m.selected[name] = true
 		}
-		m.applyFilter()
-		m.table.SetCursor(cur)
+		// Selection is drawn from m.selected at render time, not baked into the
+		// rows, so toggling needs no row rebuild — only the cursor row's
+		// highlight has to be told (it carries selection as an underline).
+		m.syncCursor()
 		return m, nil
 	case "x":
 		return m, m.openRelease()

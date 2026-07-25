@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
@@ -193,7 +194,14 @@ func cutAtWidth(s string, w int) (head, tail string, ok bool) {
 		if acc == w {
 			return s[:i], s[i:], true
 		}
-		acc += ansi.StringWidth(string(r))
+		// Table cells are overwhelmingly printable ASCII (ids, timestamps,
+		// statuses), and ansi.StringWidth needs a string per rune, so take the
+		// one-column shortcut before paying for it.
+		if r >= 0x20 && r < utf8.RuneSelf {
+			acc++
+		} else {
+			acc += ansi.StringWidth(string(r))
+		}
 		if acc > w {
 			return "", s, false
 		}
