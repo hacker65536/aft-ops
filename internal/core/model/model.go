@@ -152,6 +152,22 @@ func (a ActionExecution) Duration() time.Duration {
 	return a.LastUpdate.Sub(*a.StartTime)
 }
 
+// LogActions returns every action run of one execution that carries a
+// CodeBuild id, in pipeline order. An AFT customizations pipeline runs
+// terraform twice — global customizations, then account customizations — so
+// "the log" of an execution is really two logs, and a reader that shows only
+// one hides half the run. LogAction picks a single one instead, for callers
+// that can show only that (the CLI's default).
+func LogActions(actions []ActionExecution) []ActionExecution {
+	var out []ActionExecution
+	for _, a := range actions {
+		if a.CodeBuildID != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // LogAction picks the action whose log an operator most likely wants from
 // one execution's action runs: the first failed action carrying a CodeBuild
 // id, else the last action (in slice order) that has one. Nil when none has

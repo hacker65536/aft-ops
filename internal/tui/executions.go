@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hacker65536/aft-ops/internal/core/model"
@@ -38,21 +37,23 @@ type execsModel struct {
 	loading bool
 	err     error
 	execs   []model.Execution
-	width   int
-	height  int
+	// cursor tracks what the cursor row's highlight currently conveys (see
+	// syncCursorTint).
+	cursor cursorTint
+	width  int
+	height int
 }
 
 // newScreenTable builds a focused table with the shared list styling.
 func newScreenTable(cols []table.Column) table.Model {
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
-	st := table.DefaultStyles()
-	st.Header = st.Header.Bold(true).BorderStyle(lipgloss.NormalBorder()).
-		BorderBottom(true).BorderForeground(lipgloss.Color("8"))
-	st.Selected = st.Selected.Foreground(lipgloss.Color("0")).
-		Background(lipgloss.Color("6"))
-	t.SetStyles(st)
+	t.SetStyles(screenTableStyles(cursorTint{}))
 	return t
 }
+
+// execsStatusCol is the STATUS column's index in execsColumns (the column
+// whose cells are colored by status).
+const execsStatusCol = 1
 
 func execsColumns(width int) []table.Column {
 	// The table pads every column by 2 (1 each side), so leave 2 per column
@@ -167,7 +168,18 @@ func (m execsModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
+	m.syncCursor()
 	return m, cmd
+}
+
+// syncCursor keeps the cursor row's highlight in step with the status of the
+// execution under it.
+func (m *execsModel) syncCursor() {
+	var want cursorTint
+	if e := m.selectedExec(); e != nil {
+		want.failed = e.Status == model.StatusFailed
+	}
+	m.cursor = syncCursorTint(&m.table, want, m.cursor)
 }
 
 // selectedExec returns the execution under the cursor, or nil.
@@ -190,9 +202,11 @@ func (m execsModel) openActions() tea.Cmd {
 	return func() tea.Msg { return pushMsg{s: am} }
 }
 
-// openFastLog resolves the selected execution's most relevant build (its
-// failed action, else its last build) via ActionsFunc and pushes the log
-// screen — the v shortcut, skipping the action list.
+// openFastLog resolves every CodeBuild log of the selected execution via
+// ActionsFunc and pushes them into one log screen, in pipeline order — the v
+// shortcut, skipping the action list. All of them, not just the failed one:
+// an AFT customizations run is two terraform builds (global, then account),
+// and which one holds the answer is exactly what the operator is looking for.
 func (m execsModel) openFastLog() tea.Cmd {
 	e := m.selectedExec()
 	if e == nil || m.actions == nil || m.logs == nil {
@@ -206,11 +220,15 @@ func (m execsModel) openFastLog() tea.Cmd {
 		if err != nil {
 			return fastLogMsg{err: err}
 		}
-		a := model.LogAction(acts)
-		if a == nil {
+		builds := model.LogActions(acts)
+		if len(builds) == 0 {
 			return fastLogMsg{err: fmt.Errorf("no CodeBuild log in execution %s", shortExecID(execID))}
 		}
-		lm := newLogModel(ctx, logs, a.CodeBuildID, a.ActionName, w, h)
+		targets := make([]logTarget, 0, len(builds))
+		for _, a := range builds {
+			targets = append(targets, logTarget{title: a.ActionName, buildID: a.CodeBuildID})
+		}
+		lm := newLogModel(ctx, logs, targets, "execution "+shortExecID(execID), w, h)
 		return fastLogMsg{lm: &lm}
 	}
 }
@@ -227,6 +245,7 @@ func (m *execsModel) setRows() {
 		})
 	}
 	m.table.SetRows(rows)
+	m.syncCursor()
 }
 
 // shortExecID abbreviates a pipeline execution id (a UUID) to its first
@@ -340,7 +359,7 @@ func (m execsModel) View() string {
 	if m.err != nil {
 		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")
 	}
-	b.WriteString(m.table.View() + "\n")
+	b.WriteString(renderStatusTable(m.table, execsStatusCol) + "\n")
 	for _, line := range m.revisionLines() {
 		b.WriteString(dimStyle.Render(line) + "\n")
 	}

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,5 +176,91 @@ func TestExecsBackPops(t *testing.T) {
 		if _, ok := cmd().(popMsg); !ok {
 			t.Errorf("%v should emit popMsg, got %T", key, cmd())
 		}
+	}
+}
+
+// v on a selected execution resolves every CodeBuild action of that execution
+// into one log screen, in pipeline order — an AFT run has two terraform
+// builds, and showing one of them hides half the run.
+func TestExecsFastLogCoversEveryBuild(t *testing.T) {
+	acts := []model.ActionExecution{
+		{StageName: "Source", ActionName: "aft-global-customizations"}, // source: no build id
+		{StageName: "AFT-Global-Customizations", ActionName: "aft-global-customizations",
+			Status: model.StatusSucceeded, CodeBuildID: "global:uuid"},
+		{StageName: "AFT-Account-Customizations", ActionName: "aft-account-customizations",
+			Status: model.StatusFailed, CodeBuildID: "account:uuid"},
+	}
+	m := newExecsModel(context.Background(), nil,
+		func(context.Context, string, string, bool) ([]model.ActionExecution, error) { return acts, nil },
+		func(context.Context, string) ([]string, error) { return nil, nil },
+		"111111111111-customizations-pipeline", "alpha", 80, 24)
+	loaded, _ := m.Update(execsLoadedMsg{execs: testExecs()})
+	m = loaded.(execsModel)
+	m.table.SetCursor(0)
+
+	cmd := m.openFastLog()
+	if cmd == nil {
+		t.Fatal("v on a selected execution should resolve a log")
+	}
+	msg, ok := cmd().(fastLogMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("openFastLog = %+v, want a resolved log screen", msg)
+	}
+	got := msg.lm.targets
+	want := []logTarget{
+		{title: "aft-global-customizations", buildID: "global:uuid"},
+		{title: "aft-account-customizations", buildID: "account:uuid"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("targets = %+v, want both builds %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("targets[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// An execution whose actions carry no build id (e.g. source-only) reports
+// that instead of pushing an empty log screen.
+func TestExecsFastLogNoBuild(t *testing.T) {
+	m := newExecsModel(context.Background(), nil,
+		func(context.Context, string, string, bool) ([]model.ActionExecution, error) {
+			return []model.ActionExecution{{StageName: "Source", ActionName: "src"}}, nil
+		},
+		func(context.Context, string) ([]string, error) { return nil, nil },
+		"p", "alpha", 80, 24)
+	loaded, _ := m.Update(execsLoadedMsg{execs: testExecs()})
+	m = loaded.(execsModel)
+	m.table.SetCursor(0)
+
+	msg, ok := m.openFastLog()().(fastLogMsg)
+	if !ok || msg.err == nil {
+		t.Fatalf("openFastLog = %+v, want an error about the missing build", msg)
+	}
+}
+
+// The executions table reddens a Failed status, and the cursor row's
+// highlight follows the status under it.
+func TestExecsFailedStatusIsColored(t *testing.T) {
+	m := newExecsModel(context.Background(), nil, nil, nil, "p", "alpha", 80, 24)
+	loaded, _ := m.Update(execsLoadedMsg{execs: testExecs()})
+	em := loaded.(execsModel)
+
+	// Row 0 is Failed and row 1 Succeeded (testExecs), so the cursor starts on
+	// the failed row and carries the tinted highlight.
+	if !em.cursor.failed {
+		t.Error("the cursor on a failed execution should tint its highlight")
+	}
+	em.table.SetCursor(1)
+	em.syncCursor()
+	if em.cursor.failed {
+		t.Error("moving off the failed execution should restore the neutral highlight")
+	}
+	// With the cursor on row 1, row 0's Failed cell is a plain line and gets
+	// the color.
+	markSpans(t)
+	if out := em.View(); !strings.Contains(out, "<Failed>") {
+		t.Errorf("the executions table should color a Failed status:\n%s", out)
 	}
 }

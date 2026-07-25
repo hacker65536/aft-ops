@@ -83,7 +83,7 @@ func TestActionsKeyLPushesLog(t *testing.T) {
 		if !ok {
 			t.Fatalf("%v should emit pushMsg, got %T", key, cmd())
 		}
-		if lm, ok := push.s.(logModel); !ok || lm.buildID != "proj:uuid" {
+		if lm, ok := push.s.(logModel); !ok || len(lm.targets) != 1 || lm.targets[0].buildID != "proj:uuid" {
 			t.Errorf("pushed screen should be a logModel for proj:uuid, got %T", push.s)
 		}
 	}

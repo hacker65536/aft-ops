@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +28,44 @@ func TestSpaceTogglesSelection(t *testing.T) {
 	m = next.(uiModel)
 	if m.selected[alphaPipeline] {
 		t.Error("space again should deselect the row")
+	}
+}
+
+// Selection shows as a whole-row highlight rather than a marker column: the
+// row under the cursor is marked by underlining its highlight (the background
+// is already the cursor's), and the others by the highlight background.
+func TestSelectionRendersAsRowHighlight(t *testing.T) {
+	markSpans(t)
+	m := testModel(t, nil)
+	m.table.SetCursor(0) // alpha, which is Failed
+
+	if strings.Contains(m.renderTable(), "[") {
+		t.Fatal("nothing is selected yet, so no row should be highlighted")
+	}
+
+	// Select bravo (row 1) while the cursor stays on alpha (row 0).
+	m.table.SetCursor(1)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = next.(uiModel)
+	m.table.SetCursor(0)
+	(&m).syncCursor()
+
+	rows := strings.Split(m.renderTable(), "\n")[2:]
+	if !strings.HasPrefix(rows[1], "[") {
+		t.Errorf("the selected row should carry the highlight:\n%q", rows[1])
+	}
+	if !strings.Contains(rows[0], "<Failed>") {
+		t.Errorf("the cursor row is skipped by the styler, so its plain twin keeps the color:\n%q", rows[0])
+	}
+	if m.cursor.selected {
+		t.Error("the cursor sits on an unselected row")
+	}
+
+	// Moving the cursor onto the selected row turns the tint into an underline.
+	m.table.SetCursor(1)
+	(&m).syncCursor()
+	if !m.cursor.selected {
+		t.Error("the cursor row is selected, so its highlight must say so")
 	}
 }
 

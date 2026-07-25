@@ -25,6 +25,17 @@ func failedDetail() *model.PipelineDetail {
 	}
 }
 
+// testLogModel is a single-build log screen, the shape most of these tests
+// exercise.
+func testLogModel(action string, w, h int) logModel {
+	return newLogModel(context.Background(), nil, oneLogTarget("proj:uuid", action), action, w, h)
+}
+
+// oneBuildLoaded delivers one build's raw lines to a single-build screen.
+func oneBuildLoaded(lines []string) logLoadedMsg {
+	return logLoadedMsg{raws: [][]string{lines}, errs: []error{nil}}
+}
+
 // logBuildID picks the failed action's build id.
 func TestLogBuildIDPicksFailedAction(t *testing.T) {
 	id, action := logBuildID(failedDetail())
@@ -38,7 +49,7 @@ func TestLogBuildIDPicksFailedAction(t *testing.T) {
 func TestFastLogMsgOnList(t *testing.T) {
 	m := testModel(t, nil)
 
-	lm := newLogModel(context.Background(), nil, "proj:uuid", "terraform-apply", 80, 24)
+	lm := testLogModel("terraform-apply", 80, 24)
 	next, cmd := m.Update(fastLogMsg{lm: &lm})
 	if next.(uiModel).loading {
 		t.Error("fastLogMsg should clear loading")
@@ -50,7 +61,7 @@ func TestFastLogMsgOnList(t *testing.T) {
 	if !ok {
 		t.Fatalf("fastLogMsg should emit pushMsg, got %T", cmd())
 	}
-	if got, ok := push.s.(logModel); !ok || got.buildID != "proj:uuid" {
+	if got, ok := push.s.(logModel); !ok || len(got.targets) != 1 || got.targets[0].buildID != "proj:uuid" {
 		t.Errorf("pushed screen should be a logModel for proj:uuid, got %T", push.s)
 	}
 
@@ -62,7 +73,7 @@ func TestFastLogMsgOnList(t *testing.T) {
 
 // A loaded log renders through the default terraform mode; m cycles modes.
 func TestLogModeCycle(t *testing.T) {
-	m := newLogModel(context.Background(), nil, "proj:uuid", "terraform-apply", 80, 24)
+	m := testLogModel("terraform-apply", 80, 24)
 	if m.mode != logs.ModeTerraform {
 		t.Fatalf("default mode = %v, want terraform", m.mode)
 	}
@@ -71,11 +82,11 @@ func TestLogModeCycle(t *testing.T) {
 		"Terraform will perform the following actions",
 		"Plan: 1 to add, 0 to change, 0 to destroy.",
 	}
-	next, _ := m.Update(logLoadedMsg{lines: raw})
+	next, _ := m.Update(oneBuildLoaded(raw))
 	m = next.(logModel)
 
 	// terraform mode drops the pre-terraform "[Container] setup" line.
-	if got := logs.Render(m.raw, m.mode); strings.Contains(strings.Join(got, "\n"), "[Container] setup") {
+	if got := logs.Render(m.raws[0], m.mode); strings.Contains(strings.Join(got, "\n"), "[Container] setup") {
 		t.Error("terraform mode should exclude pre-terraform lines")
 	}
 
@@ -85,14 +96,14 @@ func TestLogModeCycle(t *testing.T) {
 		t.Errorf("after m, mode = %v, want raw", m.mode)
 	}
 	// raw keeps every line.
-	if got := logs.Render(m.raw, m.mode); !strings.Contains(strings.Join(got, "\n"), "[Container] setup") {
+	if got := logs.Render(m.raws[0], m.mode); !strings.Contains(strings.Join(got, "\n"), "[Container] setup") {
 		t.Error("raw mode should keep every line")
 	}
 }
 
 // A failed fetch surfaces the error instead of content.
 func TestLogLoadError(t *testing.T) {
-	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 24)
+	m := testLogModel("act", 80, 24)
 	next, _ := m.Update(logLoadedMsg{err: errors.New("boom")})
 	lm := next.(logModel)
 	if lm.err == nil || lm.loading {
@@ -102,7 +113,7 @@ func TestLogLoadError(t *testing.T) {
 
 // q and esc pop the log screen.
 func TestLogQuitPops(t *testing.T) {
-	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 24)
+	m := testLogModel("act", 80, 24)
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should return a command")
@@ -126,9 +137,9 @@ func typeRunes(t *testing.T, m logModel, s string) logModel {
 func TestLogSearch(t *testing.T) {
 	// Height 6 → a 3-line viewport, so jumping to a match actually scrolls
 	// (a viewport that already shows everything clamps SetYOffset to 0).
-	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 6)
+	m := testLogModel("act", 80, 6)
 	raw := []string{"alpha", "Error: one", "beta", "ERROR: two", "gamma"}
-	next, _ := m.Update(logLoadedMsg{lines: raw})
+	next, _ := m.Update(oneBuildLoaded(raw))
 	m = next.(logModel)
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -170,8 +181,8 @@ func TestLogSearch(t *testing.T) {
 // esc clears an active search first and only pops on the next press; h/q
 // pop regardless.
 func TestLogEscClearsSearchThenPops(t *testing.T) {
-	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 24)
-	next, _ := m.Update(logLoadedMsg{lines: []string{"alpha", "beta"}})
+	m := testLogModel("act", 80, 24)
+	next, _ := m.Update(oneBuildLoaded([]string{"alpha", "beta"}))
 	m = next.(logModel)
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -200,9 +211,9 @@ func TestLogEscClearsSearchThenPops(t *testing.T) {
 
 // Switching modes re-runs the search against the new rendering.
 func TestLogSearchSurvivesModeSwitch(t *testing.T) {
-	m := newLogModel(context.Background(), nil, "proj:uuid", "act", 80, 24)
+	m := testLogModel("act", 80, 24)
 	raw := []string{"[Container] setup", "Terraform will perform the following actions", "Error: boom"}
-	next, _ := m.Update(logLoadedMsg{lines: raw})
+	next, _ := m.Update(oneBuildLoaded(raw))
 	m = next.(logModel)
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -220,5 +231,128 @@ func TestLogSearchSurvivesModeSwitch(t *testing.T) {
 	// raw mode restores the line; the query must re-match line 0.
 	if len(m.matches) != 1 || m.matches[0] != 0 {
 		t.Errorf("raw mode matches = %v, want [0]", m.matches)
+	}
+}
+
+// twoBuilds is the AFT customizations shape: one execution, two terraform
+// builds (global, then account customizations).
+func twoBuilds() []logTarget {
+	return []logTarget{
+		{title: "aft-global-customizations", buildID: "global:uuid"},
+		{title: "aft-account-customizations", buildID: "account:uuid"},
+	}
+}
+
+// A multi-build screen concatenates every build under a header line each, in
+// pipeline order, and one search covers all of them.
+func TestLogMultipleBuildsConcatenated(t *testing.T) {
+	m := newLogModel(context.Background(), nil, twoBuilds(), "execution aaaa1111", 80, 24)
+	next, _ := m.Update(logLoadedMsg{
+		raws: [][]string{
+			{"Terraform will perform the following actions", "Plan: 1 to add, 0 to change, 0 to destroy."},
+			{"Terraform will perform the following actions", "Error: account boom"},
+		},
+		errs: []error{nil, nil},
+	})
+	m = next.(logModel)
+
+	if len(m.secLine) != 2 {
+		t.Fatalf("got %d sections, want 2", len(m.secLine))
+	}
+	body := strings.Join(m.lines, "\n")
+	for _, want := range []string{
+		"aft-global-customizations", "Plan: 1 to add",
+		"aft-account-customizations", "Error: account boom",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the concatenated log should contain %q:\n%s", want, body)
+		}
+	}
+	if got, want := strings.Index(body, "aft-global"), strings.Index(body, "aft-account"); got > want {
+		t.Error("builds should stay in pipeline order (global before account)")
+	}
+
+	// A search spans both builds.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = typeRunes(t, next.(logModel), "terraform will perform")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := len(next.(logModel).matches); got != 2 {
+		t.Errorf("search matched %d lines, want one per build", got)
+	}
+}
+
+// ] and [ jump to the next/previous build's header, without wrapping.
+func TestLogSectionJump(t *testing.T) {
+	// A 3-line viewport so SetYOffset is not clamped back to 0.
+	m := newLogModel(context.Background(), nil, twoBuilds(), "execution aaaa1111", 80, 6)
+	next, _ := m.Update(logLoadedMsg{
+		raws: [][]string{
+			{"g1", "g2", "g3", "g4"},
+			{"a1", "a2", "a3", "a4"},
+		},
+		errs: []error{nil, nil},
+	})
+	m = next.(logModel)
+
+	if m.vp.YOffset != 0 || m.currentSection() != 0 {
+		t.Fatalf("a fresh screen starts at the first build, got offset %d section %d",
+			m.vp.YOffset, m.currentSection())
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	m = next.(logModel)
+	if m.vp.YOffset != m.secLine[1] || m.currentSection() != 1 {
+		t.Fatalf("] should land on the second build's header (line %d), got %d",
+			m.secLine[1], m.vp.YOffset)
+	}
+
+	// No wraparound past the last build.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	if got := next.(logModel).vp.YOffset; got != m.secLine[1] {
+		t.Errorf("] on the last build should stay put, got offset %d", got)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	m = next.(logModel)
+	if m.vp.YOffset != m.secLine[0] || m.currentSection() != 0 {
+		t.Errorf("[ should return to the first build, got offset %d", m.vp.YOffset)
+	}
+}
+
+// One build failing to load must not hide the other: its section carries the
+// error and the rest of the log still renders.
+func TestLogPartialBuildError(t *testing.T) {
+	m := newLogModel(context.Background(), nil, twoBuilds(), "execution aaaa1111", 80, 24)
+	next, _ := m.Update(logLoadedMsg{
+		raws: [][]string{nil, {"account log line"}},
+		errs: []error{errors.New("global boom"), nil},
+	})
+	m = next.(logModel)
+
+	if m.err != nil {
+		t.Errorf("a partial failure should not blank the screen: %v", m.err)
+	}
+	body := strings.Join(m.lines, "\n")
+	if !strings.Contains(body, "global boom") || !strings.Contains(body, "account log line") {
+		t.Errorf("both the error and the surviving log should show:\n%s", body)
+	}
+}
+
+// A single-build screen gets no section headers, and the section keys are
+// inert there.
+func TestLogSingleBuildHasNoSections(t *testing.T) {
+	m := testLogModel("terraform-apply", 80, 6)
+	next, _ := m.Update(oneBuildLoaded([]string{"l1", "l2", "l3", "l4", "l5"}))
+	m = next.(logModel)
+
+	if len(m.secLine) != 0 {
+		t.Errorf("a single build should have no section headers, got %v", m.secLine)
+	}
+	if got := strings.Join(m.lines, "\n"); strings.Contains(got, "────") {
+		t.Errorf("a single build should render no separator:\n%s", got)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	if got := next.(logModel).vp.YOffset; got != 0 {
+		t.Errorf("] with one build should not scroll, got offset %d", got)
 	}
 }

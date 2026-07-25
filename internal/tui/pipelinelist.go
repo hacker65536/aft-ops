@@ -74,13 +74,16 @@ type uiModel struct {
 	progress   batch.Progress
 	progressCh chan batch.Progress
 	pollArmed  bool
-	statusIdx  int
-	sortKey    model.SortKey
-	sortOrder  model.SortOrder
-	filtering  bool
-	err        error
-	width      int
-	height     int
+	// cursor tracks what the cursor row's highlight currently conveys (see
+	// syncCursorTint).
+	cursor    cursorTint
+	statusIdx int
+	sortKey   model.SortKey
+	sortOrder model.SortOrder
+	filtering bool
+	err       error
+	width     int
+	height    int
 }
 
 // sortCycle is the s-key rotation over sort keys.
@@ -107,24 +110,13 @@ func newModel(ctx context.Context, d Deps) uiModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	t := table.New(
-		table.WithColumns(columns(80)),
-		table.WithFocused(true),
-	)
-	st := table.DefaultStyles()
-	st.Header = st.Header.Bold(true).BorderStyle(lipgloss.NormalBorder()).
-		BorderBottom(true).BorderForeground(lipgloss.Color("8"))
-	st.Selected = st.Selected.Foreground(lipgloss.Color("0")).
-		Background(lipgloss.Color("6"))
-	t.SetStyles(st)
-
 	return uiModel{
 		ctx:   ctx,
 		fetch: d.Fetch, refresh: d.Refresh, detail: d.Detail,
 		execsFn: d.Executions, actionsFn: d.Actions,
 		logs: d.Logs, release: d.Release, releaseLimit: d.ReleaseLimit,
 		pollInterval: d.PollInterval, account: d.Account, region: d.Region,
-		table: t, filter: ti, spin: sp,
+		table: newScreenTable(columns(80)), filter: ti, spin: sp,
 		selected: map[string]bool{},
 		sortKey:  model.SortByLastUpdate, sortOrder: model.OrderDesc,
 	}
@@ -157,13 +149,20 @@ func (m uiModel) inFlightNames() []string {
 	return names
 }
 
-// selMark is the first column's width; it shows a check for selected rows.
-const selMark = 2
+// Column indices in columns: the STATUS cell is colored by status and the
+// ACCOUNT ID cell identifies a rendered row (it is unique per pipeline and
+// never truncated), which is how selected rows are found again in the
+// laid-out view.
+const (
+	listStatusCol = 2
+	listKeyCol    = 1
+)
 
 func columns(width int) []table.Column {
-	name := max(20, width-selMark-12-12-18-10)
+	// The table pads every column by 2 (1 each side), so leave 2 per column of
+	// slack or the last column falls off the right edge.
+	name := max(20, width-12-12-18-8)
 	return []table.Column{
-		{Title: "", Width: selMark},
 		{Title: "ACCOUNT NAME", Width: name},
 		{Title: "ACCOUNT ID", Width: 12},
 		{Title: "STATUS", Width: 12},
@@ -411,7 +410,34 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
+	m.syncCursor()
 	return m, cmd
+}
+
+// syncCursor keeps the cursor row's highlight in step with the pipeline under
+// it: its status, and whether it is picked for release (which a plain
+// background cannot show while the cursor sits on it).
+func (m *uiModel) syncCursor() {
+	var want cursorTint
+	if cur := m.table.Cursor(); cur >= 0 && cur < len(m.visible) {
+		it := m.visible[cur]
+		want = cursorTint{failed: it.Status() == model.StatusFailed, selected: m.selected[it.PipelineName]}
+	}
+	m.cursor = syncCursorTint(&m.table, want, m.cursor)
+}
+
+// renderTable draws the list with the rows picked for release on a highlight
+// background and Failed statuses in red. Rows are matched by their ACCOUNT ID
+// cell, the one column that is unique per row and never truncated.
+func (m uiModel) renderTable() string {
+	sel := make(map[string]bool, len(m.selected))
+	for _, it := range m.items {
+		if m.selected[it.PipelineName] && it.AccountID != "" {
+			sel[it.AccountID] = true
+		}
+	}
+	return renderSelectableTable(m.table, listStatusCol, listKeyCol,
+		func(key string) (lipgloss.Style, bool) { return selectedRowStyle, sel[key] })
 }
 
 // openExecutions pushes the execution history screen for the selected row.
@@ -456,7 +482,7 @@ func (m uiModel) openFastLog() tea.Cmd {
 		if id == "" {
 			return fastLogMsg{err: fmt.Errorf("no CodeBuild log found for %s", sel.PipelineName)}
 		}
-		lm := newLogModel(ctx, logs, id, action, w, h)
+		lm := newLogModel(ctx, logs, oneLogTarget(id, action), action, w, h)
 		return fastLogMsg{lm: &lm}
 	}
 }
@@ -557,15 +583,12 @@ func (m *uiModel) applyFilter() {
 		if name == "" {
 			name = "-"
 		}
-		mark := ""
-		if m.selected[it.PipelineName] {
-			mark = "✓"
-		}
-		rows = append(rows, table.Row{mark, name, it.AccountID, status, last})
+		rows = append(rows, table.Row{name, it.AccountID, status, last})
 		visible = append(visible, it)
 	}
 	m.table.SetRows(rows)
 	m.visible = visible
+	m.syncCursor()
 }
 
 var (
@@ -607,7 +630,7 @@ func (m uiModel) View() string {
 	if m.err != nil {
 		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")
 	}
-	b.WriteString(m.table.View() + "\n")
+	b.WriteString(m.renderTable() + "\n")
 	b.WriteString(dimStyle.Render("q quit · / filter · f status · s sort · o order · l/enter executions · v log · space select · x release · r/R refresh"))
 	return b.String()
 }

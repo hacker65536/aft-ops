@@ -323,7 +323,7 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   space multi-select           r refresh                  r refresh
   q quit
       │                            │                          ▲
-      └────────── v ───────────────┴────── v ─────────────────┘   （failed action / 最後の build のログへ直行）
+      └────────── v ───────────────┴────── v ─────────────────┘   （一覧: failed action / Executions: その実行の全 build）
 
 [Pipeline List] ──x──▶ [Release]  (confirm → run → results)
 ```
@@ -332,7 +332,21 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   (last-update→status→account)・`o` 昇降順トグル・`l`/`enter` 実行履歴画面・`v` ログ直行・
   `space` 選択トグル・`x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。
   既定ソートは last-update 降順（CLI と同一のコア `model.SortSummaries`）。
-  選択行は先頭列に `✓`、header に `[N selected]`
+  release 対象に選んだ行は**行全体をハイライト**（マーカー列は持たない）、header に `[N selected]`
+- **行スタイリング（`internal/tui/statuscolor.go`）**: bubbles の table はセル値を
+  「エスケープ列を可視幅として数える」ヘルパーで切り詰めるため、行データに色を埋めると壊れる
+  （`\x1b[31mFailed\x1b[…`）。そのため **描画済みの view に対して後段でスタイルを当てる**。
+  対象は 2 つ:
+  - **STATUS 列（一覧 / Executions / Actions 共通）**: `Failed` の文字だけを赤にする
+  - **選択行（一覧のみ）**: 行全体を反転気味のハイライト地に。行の同定は **ACCOUNT ID セル**
+    （行内で一意かつ切り詰められない唯一の列）で行う
+
+  行のベーススタイルと `Failed` の色は**別スパンとして描画**する（それぞれが自前で
+  エスケープを開いて閉じるので、色のリセットがハイライトを行末まで落とさない）。
+  既にスタイル済みの行（header・下罫線・**カーソル行**）は後段処理の対象外 —
+  カーソル行は行全体が 1 つのスタイルで包まれており、内側の色のリセットが
+  ハイライトを壊すため。カーソル行が伝えるべき状態は**ハイライト自体**に載せる
+  （`cursorTint`）: Failed なら赤地、選択済みなら下線（背景はカーソルが使っているため）
 - Executions 画面（実装済み）: `pipeline.Executions`（ListPipelineExecutions 1 ページ・新しい順）を
   テーブル表示（短縮 id / status / 開始 / 所要 / commit message）。選択実行の source revisions
   （source action 名 – 短縮 hash: commit message、AFT の 2 リポジトリ分）をテーブル下に
@@ -355,6 +369,13 @@ CodePipeline の実データモデル（pipeline → executions → action execu
 - ログ画面（実装済み）: 対象 build のログを `logs.Fetch` で 1 回取得し viewport 表示。
   `m` で terraform→raw→summary をローカル切替（再フェッチなし。描画は CLI `pipeline logs` と
   同一の `logs.Render`）。`j`/`k` スクロール・`g`/`G` 先頭/末尾・`h`/`q`/`esc` で戻る。
+  **複数 build を 1 画面に持てる**（AFT の customizations 実行は global / account の
+  2 回 terraform を回すため、「その実行のログ」は 2 本ある）: パイプライン順に連結し、
+  各 build の前に `──── <action> ────` の区切り行を挟む。検索 (`/`) は全 build を横断し、
+  `[` / `]` で前後の build 先頭へジャンプ（wraparound なし）、header に `[build i/N]` を表示。
+  取得は build を 1 本ずつ直列（actions 画面の verdict 先読みと同じ理由: 並列化すると
+  batch エンジンのレート制御外で同時リクエストが飛ぶ）。1 本だけ取得に失敗した場合は
+  その section にエラー行を出し、もう 1 本のログは表示する（全滅時のみ画面全体をエラーに）。
   less 風検索: `/` で入力 → `enter` で確定（現在位置以降の最初のマッチへジャンプ）・
   `n`/`N` で次/前のマッチへ wraparound 移動・現在マッチ行は反転表示・footer に `i/N` 表示・
   `esc` は検索クリア → 2 回目で戻る。マッチは ANSI 除去後の行に対する大小文字無視の部分一致で、
@@ -364,9 +385,13 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   実行中 build は毎回再取得。ディスクには書かない（ディスクキャッシュは §4.1 の
   アカウント map・パイプライン一覧のみのまま）
 - `v` ログ直行（実装済み）: 「失敗した → terraform ログを見る」という最頻ケースの 1 打鍵ショートカット。
-  一覧では `pipeline.Detail`（GetPipelineState 1 回）、Executions 画面では選択実行の
-  `ActionExecutions` から、失敗アクション（無ければ build id を持つ最後のアクション）を解決して
-  ログ画面を直接 push する。解決不能時はエラーをその場に表示
+  解決不能時はエラーをその場に表示。
+  - 一覧: `pipeline.Detail`（GetPipelineState 1 回）→ 失敗アクション、無ければ build id を持つ
+    最後のアクション（`logBuildID`）の 1 本
+  - Executions 画面: 選択実行の `ActionExecutions` → **build id を持つ全アクション**
+    （`model.LogActions`、パイプライン順）を 1 つのログ画面に連結。失敗した 1 本だけに絞らないのは、
+    どちらの terraform に答えがあるか探しているのがまさにこの操作だから。単一 build を選ぶ
+    `model.LogAction` は CLI `pipeline logs --execution` 側の既定として残る
 - Release 画面（実装済み・`internal/tui/release.go`）: 一覧で `space` 選択 → `x` で遷移。
   confirm（対象一覧 `output.PipelineTable` 再利用 + 件数 + `max_targets` ガード判定。超過時は `y` を無効化し
   「N 件外す」表示）→ 実行中は spinner + `Done/Total/Failed` 進捗 → 結果（`output.ReleaseTable` 再利用・

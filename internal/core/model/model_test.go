@@ -107,3 +107,32 @@ func TestRevisionMessage(t *testing.T) {
 		}
 	}
 }
+
+// LogActions keeps every build of an execution, in pipeline order, and drops
+// the actions that have no log (source actions); LogAction narrows the same
+// input to the single most relevant one.
+func TestLogActionsAndLogAction(t *testing.T) {
+	acts := []ActionExecution{
+		{StageName: "Source", ActionName: "aft-global-customizations", Status: StatusSucceeded},
+		{StageName: "AFT-Global-Customizations", ActionName: "aft-global-customizations",
+			Status: StatusSucceeded, CodeBuildID: "global:uuid"},
+		{StageName: "AFT-Account-Customizations", ActionName: "aft-account-customizations",
+			Status: StatusFailed, CodeBuildID: "account:uuid"},
+	}
+
+	got := LogActions(acts)
+	if len(got) != 2 {
+		t.Fatalf("LogActions returned %d builds, want 2", len(got))
+	}
+	if got[0].CodeBuildID != "global:uuid" || got[1].CodeBuildID != "account:uuid" {
+		t.Errorf("LogActions = %q/%q, want global then account",
+			got[0].CodeBuildID, got[1].CodeBuildID)
+	}
+	if a := LogAction(acts); a == nil || a.CodeBuildID != "account:uuid" {
+		t.Errorf("LogAction = %+v, want the failed build", a)
+	}
+
+	if got := LogActions(acts[:1]); len(got) != 0 {
+		t.Errorf("LogActions with no build ids = %+v, want none", got)
+	}
+}

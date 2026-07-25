@@ -92,8 +92,11 @@ type actionsModel struct {
 	// fetched from the build log after the action list loads (which also
 	// pre-warms the log memo, so opening the log screen is instant).
 	verdicts map[string]string
-	width    int
-	height   int
+	// cursor tracks what the cursor row's highlight currently conveys (see
+	// syncCursorTint).
+	cursor cursorTint
+	width  int
+	height int
 }
 
 // actionsChrome is the number of non-table lines: header, inline detail
@@ -103,6 +106,9 @@ const actionsChrome = 6
 // stageColWidth fits the longest stock AFT stage name
 // ("AFT-Account-Customizations").
 const stageColWidth = 26
+
+// actionsStatusCol is the STATUS column's index in actionsColumns.
+const actionsStatusCol = 2
 
 func actionsColumns(width int) []table.Column {
 	// The table pads every column by 2 (1 each side), so leave 2 per column
@@ -202,7 +208,18 @@ func (m actionsModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
+	m.syncCursor()
 	return m, cmd
+}
+
+// syncCursor keeps the cursor row's highlight in step with the status of the
+// action run under it.
+func (m *actionsModel) syncCursor() {
+	var want cursorTint
+	if a := m.selectedAction(); a != nil {
+		want.failed = a.Status == model.StatusFailed
+	}
+	m.cursor = syncCursorTint(&m.table, want, m.cursor)
 }
 
 // verdictCmd fetches each terminal CodeBuild action's log in the background
@@ -263,7 +280,8 @@ func (m actionsModel) openLog() tea.Cmd {
 	if a == nil || m.logs == nil || a.CodeBuildID == "" {
 		return nil
 	}
-	lm := newLogModel(m.ctx, m.logs, a.CodeBuildID, a.ActionName, m.width, m.height)
+	lm := newLogModel(m.ctx, m.logs, oneLogTarget(a.CodeBuildID, a.ActionName),
+		a.ActionName, m.width, m.height)
 	return func() tea.Msg { return pushMsg{s: lm} }
 }
 
@@ -279,6 +297,7 @@ func (m *actionsModel) setRows() {
 		})
 	}
 	m.table.SetRows(rows)
+	m.syncCursor()
 }
 
 // detailLines renders the selected action's summary and error inline (each
@@ -314,7 +333,7 @@ func (m actionsModel) View() string {
 	if m.err != nil {
 		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")
 	}
-	b.WriteString(m.table.View() + "\n")
+	b.WriteString(renderStatusTable(m.table, actionsStatusCol) + "\n")
 
 	summary, errMsg := m.detailLines()
 	if summary == "" {
