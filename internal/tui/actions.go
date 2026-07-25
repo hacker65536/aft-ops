@@ -280,8 +280,8 @@ func (m actionsModel) openLog() tea.Cmd {
 	if a == nil || m.logs == nil || a.CodeBuildID == "" {
 		return nil
 	}
-	lm := newLogModel(m.ctx, m.logs, oneLogTarget(a.CodeBuildID, a.ActionName),
-		a.ActionName, m.width, m.height)
+	lm := newLogModel(m.ctx, m.logs, oneLogTarget(a.CodeBuildID, a.StageName, a.ActionName),
+		"execution "+shortExecID(m.exec.ID), m.width, m.height)
 	return func() tea.Msg { return pushMsg{s: lm} }
 }
 

@@ -459,13 +459,22 @@ func (m uiModel) openExecutions() tea.Cmd {
 	return func() tea.Msg { return pushMsg{s: em} }
 }
 
-// openFastLog resolves the selected pipeline's most relevant build — its
-// failed action, else the last action carrying a build id — with a single
-// GetPipelineState call and pushes the log screen directly. This is the v
-// shortcut for the everyday case ("it failed, show me the terraform log")
-// without walking executions → actions.
+// openFastLog resolves the selected pipeline's terraform logs and pushes the
+// log screen directly — the v shortcut for the everyday case ("it failed,
+// show me the terraform log") without walking executions → actions. All of
+// its builds, not just one: an AFT customizations run is two terraform builds
+// (global, then account customizations), and which one holds the answer is
+// exactly what the operator is looking for.
+//
+// The row already knows its latest execution, so the builds are taken from
+// that execution's action runs. That is one ListActionExecutions call and,
+// unlike the pipeline's current state, self-consistent: GetPipelineState
+// reports each action's own latest run, so a stage that did not run in the
+// latest execution would contribute a log from an older one. Rows whose
+// latest execution is unknown (a status fetch that failed) fall back to the
+// state call, which is all there is to go on.
 func (m uiModel) openFastLog() tea.Cmd {
-	if m.detail == nil || m.logs == nil {
+	if m.logs == nil {
 		return nil
 	}
 	cur := m.table.Cursor()
@@ -473,36 +482,52 @@ func (m uiModel) openFastLog() tea.Cmd {
 		return nil
 	}
 	sel := m.visible[cur]
-	ctx, detail, logs := m.ctx, m.detail, m.logs
+	ctx, logs := m.ctx, m.logs
 	w, h := m.width, m.height
+
+	if m.actionsFn != nil && sel.Latest != nil && sel.Latest.ID != "" {
+		actions := m.actionsFn
+		name, execID, done := sel.PipelineName, sel.Latest.ID, sel.Latest.Status.Terminal()
+		return func() tea.Msg {
+			acts, err := actions(ctx, name, execID, done)
+			if err != nil {
+				return fastLogMsg{err: err}
+			}
+			targets := execLogTargets(acts)
+			if len(targets) == 0 {
+				return fastLogMsg{err: fmt.Errorf("no CodeBuild log in execution %s of %s",
+					shortExecID(execID), name)}
+			}
+			lm := newLogModel(ctx, logs, targets, rowLabel(sel), w, h)
+			return fastLogMsg{lm: &lm}
+		}
+	}
+
+	if m.detail == nil {
+		return nil
+	}
+	detail := m.detail
 	return func() tea.Msg {
 		d, err := detail(ctx, sel.PipelineName)
 		if err != nil {
 			return fastLogMsg{err: err}
 		}
-		id, action := logBuildID(d)
-		if id == "" {
+		targets := stateLogTargets(d)
+		if len(targets) == 0 {
 			return fastLogMsg{err: fmt.Errorf("no CodeBuild log found for %s", sel.PipelineName)}
 		}
-		lm := newLogModel(ctx, logs, oneLogTarget(id, action), action, w, h)
+		lm := newLogModel(ctx, logs, targets, rowLabel(sel), w, h)
 		return fastLogMsg{lm: &lm}
 	}
 }
 
-// logBuildID picks the CodeBuild action to show logs for: the first failed
-// action, otherwise the last action across stages that has a build id.
-func logBuildID(d *model.PipelineDetail) (id, action string) {
-	if fa := d.FailedActions(); len(fa) > 0 {
-		return fa[0].CodeBuildID, fa[0].Name
+// rowLabel names a list row for a screen title: its account name, else the
+// pipeline name (an account the resolver could not name).
+func rowLabel(p model.PipelineSummary) string {
+	if p.AccountName != "" {
+		return p.AccountName
 	}
-	for _, st := range d.Stages {
-		for _, a := range st.Actions {
-			if a.CodeBuildID != "" {
-				id, action = a.CodeBuildID, a.Name
-			}
-		}
-	}
-	return id, action
+	return p.PipelineName
 }
 
 // openRelease pushes the release confirm/run screen for the selected rows.

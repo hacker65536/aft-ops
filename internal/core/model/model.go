@@ -390,6 +390,31 @@ type PipelineDetail struct {
 	History      []Execution  `json:"history,omitempty"`
 }
 
+// StageAction is one action together with the stage it ran in.
+// PipelineDetail nests actions under stages, so flattening them loses the
+// stage name — and the stage is what tells two same-named actions apart: an
+// AFT customizations pipeline runs an action called "Apply" in both the
+// global and the account customizations stage.
+type StageAction struct {
+	Stage  string      `json:"stage"`
+	Action ActionState `json:"action"`
+}
+
+// BuildActions returns every action carrying a CodeBuild id across all
+// stages, in stage order — every log of the pipeline's current state, not
+// just one of them.
+func (d PipelineDetail) BuildActions() []StageAction {
+	var out []StageAction
+	for _, st := range d.Stages {
+		for _, a := range st.Actions {
+			if a.CodeBuildID != "" {
+				out = append(out, StageAction{Stage: st.Name, Action: a})
+			}
+		}
+	}
+	return out
+}
+
 // FailedActions returns every failed CodeBuild action across all stages,
 // in stage order — the candidates for `pipeline logs`.
 func (d PipelineDetail) FailedActions() []ActionState {

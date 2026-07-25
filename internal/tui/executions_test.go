@@ -208,8 +208,10 @@ func TestExecsFastLogCoversEveryBuild(t *testing.T) {
 	}
 	got := msg.lm.targets
 	want := []logTarget{
-		{title: "aft-global-customizations", buildID: "global:uuid"},
-		{title: "aft-account-customizations", buildID: "account:uuid"},
+		{stage: "AFT-Global-Customizations", action: "aft-global-customizations",
+			buildID: "global:uuid"},
+		{stage: "AFT-Account-Customizations", action: "aft-account-customizations",
+			buildID: "account:uuid"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("targets = %+v, want both builds %+v", got, want)

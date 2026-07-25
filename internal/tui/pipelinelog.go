@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hacker65536/aft-ops/internal/core/logs"
+	"github.com/hacker65536/aft-ops/internal/core/model"
 )
 
 // matchLineStyle marks the current search match's line (reverse video, like
@@ -26,11 +27,53 @@ var sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")
 // consume; the viewport gets the rest.
 const chromeHeight = 3
 
-// logTarget is one build the log screen shows: the section title it is
-// labelled with and the CodeBuild id its lines come from.
+// logTarget is one build the log screen shows: the stage and action that ran
+// it, and the CodeBuild id its lines come from.
 type logTarget struct {
-	title   string
+	stage   string
+	action  string
 	buildID string
+}
+
+// label names one build in the UI. The action name alone will not do: an AFT
+// customizations run executes an action called "Apply" in both the global and
+// the account customizations stage, so two sections would carry the same
+// label and the operator could not tell which log is which. The stage is what
+// distinguishes them.
+func (t logTarget) label() string {
+	switch {
+	case t.stage == "":
+		return t.action
+	case t.action == "":
+		return t.stage
+	}
+	return t.stage + " / " + t.action
+}
+
+// execLogTargets turns one execution's action runs into log targets: every
+// CodeBuild-backed action of that execution, in pipeline order.
+func execLogTargets(actions []model.ActionExecution) []logTarget {
+	builds := model.LogActions(actions)
+	targets := make([]logTarget, 0, len(builds))
+	for _, a := range builds {
+		targets = append(targets, logTarget{
+			stage: a.StageName, action: a.ActionName, buildID: a.CodeBuildID,
+		})
+	}
+	return targets
+}
+
+// stateLogTargets does the same for a pipeline's current stage/action state
+// (GetPipelineState), where each action reports its own latest run.
+func stateLogTargets(d *model.PipelineDetail) []logTarget {
+	builds := d.BuildActions()
+	targets := make([]logTarget, 0, len(builds))
+	for _, b := range builds {
+		targets = append(targets, logTarget{
+			stage: b.Stage, action: b.Action.Name, buildID: b.Action.CodeBuildID,
+		})
+	}
+	return targets
 }
 
 // logLoadedMsg carries the raw log lines fetched for the screen's builds,
@@ -82,13 +125,16 @@ type logModel struct {
 	secLine []int
 }
 
-func newLogModel(ctx context.Context, load LogsFunc, targets []logTarget, title string, w, h int) logModel {
+// newLogModel builds the log screen for the given builds. origin names where
+// the screen was opened from (an execution, an account); the title adds the
+// build's own label to it when there is only one build to show.
+func newLogModel(ctx context.Context, load LogsFunc, targets []logTarget, origin string, w, h int) logModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	ti := textinput.New()
 	ti.Prompt = "/"
 	m := logModel{
-		ctx: ctx, load: load, targets: targets, title: title,
+		ctx: ctx, load: load, targets: targets, title: logScreenTitle(origin, targets),
 		spin: sp, loading: true, mode: logs.ModeTerraform, width: w, height: h,
 		search: ti,
 	}
@@ -96,9 +142,26 @@ func newLogModel(ctx context.Context, load LogsFunc, targets []logTarget, title 
 	return m
 }
 
-// oneLogTarget is the single-build case: one action's log under its own name.
-func oneLogTarget(buildID, action string) []logTarget {
-	return []logTarget{{title: action, buildID: buildID}}
+// logScreenTitle names the screen: its origin, plus the build's stage/action
+// when the screen holds a single build. A multi-build screen labels each
+// build with its own section header instead, so the title stays the context.
+func logScreenTitle(origin string, targets []logTarget) string {
+	if len(targets) != 1 {
+		return origin
+	}
+	label := targets[0].label()
+	switch {
+	case origin == "":
+		return label
+	case label == "":
+		return origin
+	}
+	return origin + " · " + label
+}
+
+// oneLogTarget is the single-build case: one action's log.
+func oneLogTarget(buildID, stage, action string) []logTarget {
+	return []logTarget{{stage: stage, action: action, buildID: buildID}}
 }
 
 func (m logModel) Init() tea.Cmd {
@@ -290,10 +353,10 @@ func (m logModel) targetErr(i int) error {
 	return nil
 }
 
-// sectionHeader renders one build's separator, "──── action ────" filling the
-// width, so a concatenated log stays readable while scrolling.
+// sectionHeader renders one build's separator, "──── stage / action ────"
+// filling the width, so a concatenated log stays readable while scrolling.
 func (m logModel) sectionHeader(i int) string {
-	s := "──── " + m.targets[i].title + " "
+	s := "──── " + m.targets[i].label() + " "
 	if pad := m.width - ansi.StringWidth(s); pad > 0 {
 		s += strings.Repeat("─", pad)
 	}
@@ -398,15 +461,20 @@ func (m *logModel) setContent() {
 func (m logModel) View() string {
 	var b strings.Builder
 
-	header := navDots(4) + " " + titleStyle.Render("log: "+m.title)
+	// The title is the elastic part of the header: a stage-qualified title
+	// next to the indicators can outgrow a narrow terminal, and a wrapped
+	// header would push the viewport's last line off the screen.
+	head := navDots(4) + " "
+	var tail string
 	if n := len(m.secLine); n > 1 {
-		header += dimStyle.Render(fmt.Sprintf("  [build %d/%d]", m.currentSection()+1, n))
+		tail += dimStyle.Render(fmt.Sprintf("  [build %d/%d]", m.currentSection()+1, n))
 	}
-	header += dimStyle.Render("  [mode: " + logModeName(m.mode) + "]")
+	tail += dimStyle.Render("  [mode: " + logModeName(m.mode) + "]")
 	if m.loading {
-		header += "  " + m.spin.View() + dimStyle.Render(" loading…")
+		tail += "  " + m.spin.View() + dimStyle.Render(" loading…")
 	}
-	b.WriteString(header + "\n")
+	title := clipToWidth("log: "+m.title, m.width-ansi.StringWidth(head)-ansi.StringWidth(tail))
+	b.WriteString(head + titleStyle.Render(title) + tail + "\n")
 
 	if m.err != nil {
 		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")

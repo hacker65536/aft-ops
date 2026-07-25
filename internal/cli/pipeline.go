@@ -496,8 +496,11 @@ func resolveBuildID(ctx context.Context, app *App, target, execID string) (strin
 		if a == nil {
 			return "", fmt.Errorf("execution %s of %s has no CodeBuild action", execID, name)
 		}
-		fmt.Fprintf(os.Stderr, "using action %q of execution %s (build %s)\n",
-			a.ActionName, execID, a.CodeBuildID)
+		// Name the stage, not just the action: an AFT customizations run has
+		// an "Apply" action in both the global and the account stage, so the
+		// action name alone does not say which log this is.
+		fmt.Fprintf(os.Stderr, "using action %q of stage %q, execution %s (build %s)\n",
+			a.ActionName, a.StageName, execID, a.CodeBuildID)
 		return a.CodeBuildID, nil
 	}
 
@@ -505,14 +508,16 @@ func resolveBuildID(ctx context.Context, app *App, target, execID string) (strin
 	if err != nil {
 		return "", err
 	}
-	failed := detail.FailedActions()
-	if len(failed) == 0 {
-		return "", fmt.Errorf(
-			"%s has no failed CodeBuild action; pass --execution <id> or --build <id> to pick one", name)
+	for _, b := range detail.BuildActions() {
+		if b.Action.Status != model.StatusFailed {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "using failed action %q of stage %q (build %s)\n",
+			b.Action.Name, b.Stage, b.Action.CodeBuildID)
+		return b.Action.CodeBuildID, nil
 	}
-	a := failed[0]
-	fmt.Fprintf(os.Stderr, "using failed action %q (build %s)\n", a.Name, a.CodeBuildID)
-	return a.CodeBuildID, nil
+	return "", fmt.Errorf(
+		"%s has no failed CodeBuild action; pass --execution <id> or --build <id> to pick one", name)
 }
 
 // fetchSummaries is the shared inventory→statuses→join flow. It always

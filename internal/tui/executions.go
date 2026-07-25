@@ -220,13 +220,9 @@ func (m execsModel) openFastLog() tea.Cmd {
 		if err != nil {
 			return fastLogMsg{err: err}
 		}
-		builds := model.LogActions(acts)
-		if len(builds) == 0 {
+		targets := execLogTargets(acts)
+		if len(targets) == 0 {
 			return fastLogMsg{err: fmt.Errorf("no CodeBuild log in execution %s", shortExecID(execID))}
-		}
-		targets := make([]logTarget, 0, len(builds))
-		for _, a := range builds {
-			targets = append(targets, logTarget{title: a.ActionName, buildID: a.CodeBuildID})
 		}
 		lm := newLogModel(ctx, logs, targets, "execution "+shortExecID(execID), w, h)
 		return fastLogMsg{lm: &lm}

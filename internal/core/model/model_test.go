@@ -136,3 +136,36 @@ func TestLogActionsAndLogAction(t *testing.T) {
 		t.Errorf("LogActions with no build ids = %+v, want none", got)
 	}
 }
+
+// BuildActions flattens a pipeline's state to its logs, keeping each build's
+// stage — the two customizations stages run identically named actions, so the
+// stage is the only thing that tells their logs apart.
+func TestBuildActions(t *testing.T) {
+	d := PipelineDetail{Stages: []StageState{
+		{Name: "Source", Actions: []ActionState{{Name: "aft-global-customizations"}}},
+		{Name: "AFT-Global-Customizations", Actions: []ActionState{
+			{Name: "Apply", Status: StatusSucceeded, CodeBuildID: "global:uuid"},
+		}},
+		{Name: "AFT-Account-Customizations", Actions: []ActionState{
+			{Name: "Apply", Status: StatusFailed, CodeBuildID: "account:uuid"},
+		}},
+	}}
+
+	got := d.BuildActions()
+	want := []StageAction{
+		{Stage: "AFT-Global-Customizations", Action: d.Stages[1].Actions[0]},
+		{Stage: "AFT-Account-Customizations", Action: d.Stages[2].Actions[0]},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("BuildActions = %+v, want both builds %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("BuildActions[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	if got := (PipelineDetail{Stages: d.Stages[:1]}).BuildActions(); len(got) != 0 {
+		t.Errorf("a source-only pipeline has no logs, got %+v", got)
+	}
+}

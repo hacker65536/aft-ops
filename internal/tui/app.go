@@ -28,8 +28,9 @@ type Fetch func(ctx context.Context, refresh bool, onProgress func(batch.Progres
 type Refresh func(ctx context.Context, names []string, onProgress func(batch.Progress)) ([]model.PipelineSummary, error)
 
 // DetailFunc loads one pipeline's stage/action state plus recent history
-// (wired to pipeline.Detail). The TUI uses it only for the v shortcut on the
-// list: one GetPipelineState call resolves the most relevant build id.
+// (wired to pipeline.Detail). The TUI uses it only as the v shortcut's
+// fallback on the list, for rows whose latest execution is unknown: one
+// GetPipelineState call resolves the build ids to show.
 type DetailFunc func(ctx context.Context, name string) (*model.PipelineDetail, error)
 
 // ExecutionsFunc loads one pipeline's recent executions, newest first
@@ -124,8 +125,8 @@ func clipToWidth(s string, w int) string {
 
 // fastLogMsg carries the result of the v shortcut's async resolution: a
 // ready-to-push log screen for the picked build, or the error explaining why
-// none could be resolved. Emitted on the list (via DetailFunc) and on the
-// executions screen (via ActionsFunc).
+// none could be resolved. Emitted on the list and on the executions screen
+// (both via ActionsFunc, the list falling back to DetailFunc).
 type fastLogMsg struct {
 	lm  *logModel
 	err error

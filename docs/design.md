@@ -323,7 +323,7 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   space multi-select           r refresh                  r refresh
   q quit
       │                            │                          ▲
-      └────────── v ───────────────┴────── v ─────────────────┘   （一覧: failed action / Executions: その実行の全 build）
+      └────────── v ───────────────┴────── v ─────────────────┘   （一覧 / Executions とも、その実行の全 build）
 
 [Pipeline List] ──x──▶ [Release]  (confirm → run → results)
 ```
@@ -371,7 +371,10 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   同一の `logs.Render`）。`j`/`k` スクロール・`g`/`G` 先頭/末尾・`h`/`q`/`esc` で戻る。
   **複数 build を 1 画面に持てる**（AFT の customizations 実行は global / account の
   2 回 terraform を回すため、「その実行のログ」は 2 本ある）: パイプライン順に連結し、
-  各 build の前に `──── <action> ────` の区切り行を挟む。検索 (`/`) は全 build を横断し、
+  各 build の前に `──── <stage> / <action> ────` の区切り行を挟む。**ラベルは stage 込み**が必須 —
+  AFT の 2 本はどちらも action 名が `Apply` なので、action 名だけではどちらのログか分からない。
+  build が 1 本だけの画面は区切り行を持たない代わりに、header の title に
+  `<開いた文脈> · <stage> / <action>` を出す（title は幅に応じてクリップ）。検索 (`/`) は全 build を横断し、
   `[` / `]` で前後の build 先頭へジャンプ（wraparound なし）、header に `[build i/N]` を表示。
   取得は build を 1 本ずつ直列（actions 画面の verdict 先読みと同じ理由: 並列化すると
   batch エンジンのレート制御外で同時リクエストが飛ぶ）。1 本だけ取得に失敗した場合は
@@ -386,8 +389,11 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   アカウント map・パイプライン一覧のみのまま）
 - `v` ログ直行（実装済み）: 「失敗した → terraform ログを見る」という最頻ケースの 1 打鍵ショートカット。
   解決不能時はエラーをその場に表示。
-  - 一覧: `pipeline.Detail`（GetPipelineState 1 回）→ 失敗アクション、無ければ build id を持つ
-    最後のアクション（`logBuildID`）の 1 本
+  - 一覧: 行が保持する最新 execution の `ActionExecutions`（ListActionExecutions 1 回）→
+    **build id を持つ全アクション**をパイプライン順に連結。GetPipelineState ではなく実行単位で
+    引くのは、state が返すのは**アクションごとの最新 run** で、最新実行で動かなかったステージが
+    古い実行のログを混ぜてしまうため。最新 execution 不明の行（status 取得失敗）だけ
+    `pipeline.Detail`（GetPipelineState 1 回）＋ `model.PipelineDetail.BuildActions()` にフォールバック
   - Executions 画面: 選択実行の `ActionExecutions` → **build id を持つ全アクション**
     （`model.LogActions`、パイプライン順）を 1 つのログ画面に連結。失敗した 1 本だけに絞らないのは、
     どちらの terraform に答えがあるか探しているのがまさにこの操作だから。単一 build を選ぶ
