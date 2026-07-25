@@ -9,6 +9,19 @@ scriptable CLI and an interactive TUI.
 > Status: early development. See [docs/requirements.md](docs/requirements.md)
 > and [docs/design.md](docs/design.md).
 
+## Install
+
+```bash
+brew install hacker65536/tap/aft-ops
+```
+
+Or grab a binary from the [releases page](https://github.com/hacker65536/aft-ops/releases),
+or build from source:
+
+```bash
+go install github.com/hacker65536/aft-ops/cmd/aft-ops@latest
+```
+
 ## Quick start
 
 ```bash

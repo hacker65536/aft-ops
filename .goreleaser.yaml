@@ -60,3 +60,29 @@ changelog:
 release:
   draft: false
   prerelease: auto
+
+# Homebrew tap. `brews` (formula) is deprecated in GoReleaser v2; casks are the
+# current path for shipping prebuilt binaries.
+homebrew_casks:
+  - name: aft-ops
+    repository:
+      owner: hacker65536
+      name: homebrew-tap
+      # A PAT with write access to the tap; the workflow's default GITHUB_TOKEN
+      # is scoped to this repository and cannot push to another one.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser-bot@users.noreply.github.com
+    homepage: https://github.com/hacker65536/aft-ops
+    description: Operate AWS Control Tower AFT customizations pipelines at scale
+    # Prereleases (see release.prerelease above) do not update the tap.
+    skip_upload: auto
+    # The binary is neither signed nor notarized, so Gatekeeper would flag it as
+    # "damaged" on first run; strip the quarantine bit after staging.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/aft-ops"]
+          end
