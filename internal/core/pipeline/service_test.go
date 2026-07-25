@@ -56,7 +56,7 @@ func (m *mockAPI) ListActionExecutions(_ context.Context, in *codepipeline.ListA
 	}
 	page := 0
 	if in.NextToken != nil {
-		fmt.Sscanf(*in.NextToken, "page-%d", &page)
+		_, _ = fmt.Sscanf(*in.NextToken, "page-%d", &page)
 	}
 	return m.actionPages[page], nil
 }

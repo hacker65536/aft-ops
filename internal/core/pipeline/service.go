@@ -385,8 +385,10 @@ func (s *Service) Executions(ctx context.Context, name string, maxN int32, refre
 		s.mu.Lock()
 		e, ok := s.execsMemo[name]
 		s.mu.Unlock()
+		// Serve the memo unless its head execution is running: a live
+		// pipeline moves, an idle one does not.
 		if ok && time.Since(e.fetchedAt) <= s.ExecutionsTTL &&
-			!(len(e.execs) > 0 && e.execs[0].Status.InFlight()) {
+			(len(e.execs) == 0 || !e.execs[0].Status.InFlight()) {
 			return e.execs, nil
 		}
 	}

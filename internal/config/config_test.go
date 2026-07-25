@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// write puts a config file in place, failing the test if it cannot.
+func write(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 func TestLoadDefaultsWithoutFile(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "config.yaml"))
 	if err == nil {
@@ -25,12 +33,12 @@ func TestLoadDefaultsWithoutFile(t *testing.T) {
 func TestLoadFileAndPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(`
+	write(t, path, `
 profile: from-file
 batch:
   concurrency: 5
   chunk_pause: 30s
-`), 0o644)
+`)
 
 	t.Setenv("AFT_OPS_PROFILE", "from-env")
 	cfg, err := Load(path)
@@ -54,7 +62,7 @@ batch:
 
 func TestLoadRejectsUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	os.WriteFile(path, []byte("profle: typo\n"), 0o644)
+	write(t, path, "profle: typo\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("unknown keys must be rejected")
 	}
