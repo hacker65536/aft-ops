@@ -82,6 +82,37 @@ func TestPipelineTableRendersRows(t *testing.T) {
 	}
 }
 
+// TestColorizedTableStaysAligned pins the reason the tables are not built
+// on text/tabwriter: a colorized cell carries ANSI escape sequences, and a
+// writer that measures cells by rune count pads for width the terminal never
+// shows — pushing every column after STATUS out of line with its header.
+func TestColorizedTableStaysAligned(t *testing.T) {
+	now := time.Now()
+	items := []model.PipelineSummary{
+		summary("alpha", "111111111111", model.StatusSucceeded, &now),
+		summary("beta", "222222222222", model.StatusFailed, &now),
+		summary("gamma", "333333333333", model.StatusInProgress, &now),
+	}
+
+	var plain, colored bytes.Buffer
+	PipelineTable(&plain, items, false)
+	PipelineTable(&colored, items, true)
+
+	plainLines := strings.Split(strings.TrimRight(plain.String(), "\n"), "\n")
+	colorLines := strings.Split(strings.TrimRight(colored.String(), "\n"), "\n")
+	if len(plainLines) != len(colorLines) {
+		t.Fatalf("line counts differ: %d vs %d", len(plainLines), len(colorLines))
+	}
+	// Stripping the color must reproduce the uncolored layout exactly:
+	// color may change how a cell looks, never where the next one starts.
+	for i := range plainLines {
+		if got := ansi.Strip(colorLines[i]); got != plainLines[i] {
+			t.Errorf("line %d\n colored (stripped): %q\n plain:              %q",
+				i, got, plainLines[i])
+		}
+	}
+}
+
 func TestPipelineCounts(t *testing.T) {
 	now := time.Now()
 	var b bytes.Buffer

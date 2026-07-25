@@ -178,6 +178,48 @@ func TestPollMsgRefreshesInFlightOnly(t *testing.T) {
 	}
 }
 
+// A tick that fires while a drill-down screen is on top is delivered to that
+// screen and dropped: the root hands every message to the top of the stack.
+// If the list did not restart the chain when it is re-exposed, pollArmed
+// would stay set and auto-refresh would be dead for the rest of the session —
+// silently, since nothing about a stale list says it stopped updating.
+func TestPollReArmsWhenListIsReExposed(t *testing.T) {
+	refresh := func(context.Context, []string, func(batch.Progress)) ([]model.PipelineSummary, error) {
+		return nil, nil
+	}
+	m := newModel(context.Background(), Deps{Refresh: refresh, PollInterval: time.Minute})
+	m.items = []model.PipelineSummary{
+		sum("222222222222-customizations-pipeline", "222222222222", "bravo", model.StatusInProgress),
+	}
+	(&m).applyFilter()
+
+	if cmd := (&m).schedulePoll(); cmd == nil {
+		t.Fatal("an in-flight row should arm a poll")
+	}
+	staleGen := m.pollGen
+
+	// Drill in and back: the root re-delivers the window size to whichever
+	// screen it just uncovered.
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(uiModel)
+	if cmd == nil {
+		t.Fatal("re-exposing the list with a running pipeline must re-arm the poll")
+	}
+	if !m.pollArmed {
+		t.Error("the re-armed poll should be marked in flight")
+	}
+
+	// The tick armed before the re-arm must not also fire, or two timer
+	// chains run in parallel from here on.
+	next, cmd = m.Update(pollMsg{gen: staleGen})
+	if cmd != nil {
+		t.Error("a retired tick must not start a refresh")
+	}
+	if !next.(uiModel).pollArmed {
+		t.Error("a retired tick must not clear the current tick's arming")
+	}
+}
+
 // Polling is off unless an interval was configured.
 func TestPollDisabledWithoutInterval(t *testing.T) {
 	m := testModel(t, func(context.Context, []string, func(batch.Progress)) ([]model.PipelineSummary, error) {

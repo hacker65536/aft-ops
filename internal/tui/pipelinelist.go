@@ -74,6 +74,7 @@ type uiModel struct {
 	progress   batch.Progress
 	progressCh chan batch.Progress
 	pollArmed  bool
+	pollGen    int
 	// cursor tracks what the cursor row's highlight currently conveys (see
 	// syncCursorTint).
 	cursor    cursorTint
@@ -122,8 +123,10 @@ func newModel(ctx context.Context, d Deps) uiModel {
 	}
 }
 
-// pollMsg fires one auto-refresh round of the in-flight rows.
-type pollMsg struct{}
+// pollMsg fires one auto-refresh round of the in-flight rows. gen retires
+// ticks armed before the timer chain was restarted (see the WindowSizeMsg
+// case), so a re-arm never leaves two timers running.
+type pollMsg struct{ gen int }
 
 // schedulePoll arms the next auto-refresh when polling is enabled and at
 // least one pipeline is running. Terminal rows never change on their own, so
@@ -135,7 +138,8 @@ func (m *uiModel) schedulePoll() tea.Cmd {
 		return nil
 	}
 	m.pollArmed = true
-	return tea.Tick(m.pollInterval, func(time.Time) tea.Msg { return pollMsg{} })
+	gen := m.pollGen
+	return tea.Tick(m.pollInterval, func(time.Time) tea.Msg { return pollMsg{gen: gen} })
 }
 
 // inFlightNames lists the pipelines that are currently running.
@@ -240,7 +244,16 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		m.table.SetColumns(columns(msg.Width))
 		m.table.SetWidth(msg.Width)
 		m.table.SetHeight(max(3, msg.Height-4))
-		return m, nil
+		// Re-arm the poll. Every message goes to the screen on top of the
+		// stack, so a tick that fired while a drill-down was open was
+		// delivered there and dropped — leaving pollArmed set and the timer
+		// chain broken for the rest of the session. The root re-sends the
+		// window size whenever this screen is re-exposed, which is the one
+		// signal we get that the chain may need restarting. The generation
+		// counter retires any tick that is still pending.
+		m.pollGen++
+		m.pollArmed = false
+		return m, m.schedulePoll()
 
 	case progressMsg:
 		m.progress = batch.Progress(msg)
@@ -277,6 +290,9 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		return m, m.schedulePoll()
 
 	case pollMsg:
+		if msg.gen != m.pollGen {
+			return m, nil // retired by a re-arm; a newer tick is pending
+		}
 		m.pollArmed = false
 		if m.loading {
 			return m, m.schedulePoll() // busy; try again next interval

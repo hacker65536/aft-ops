@@ -340,7 +340,11 @@ func (s *Service) Detail(
 			as := model.ActionState{Name: aws.ToString(a.ActionName)}
 			if le := a.LatestExecution; le != nil {
 				as.Status = model.ParseStatus(string(le.Status))
-				as.Summary = aws.ToString(le.Summary)
+				// A CodeConnections source action reports its summary as the
+				// provider JSON here too, exactly as it does on the execution
+				// and action-execution paths — unwrap it to the commit
+				// message rather than printing a JSON blob in the state view.
+				as.Summary = model.UnwrapProviderSummary(aws.ToString(le.Summary))
 				// GetPipelineState carries no action type, so gate on the
 				// id's shape: source actions put a commit SHA here, which
 				// must not be treated as a CodeBuild build id.

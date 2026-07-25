@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -65,6 +64,48 @@ var (
 	styleDim       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
+// colPad is the gap between columns.
+const colPad = 2
+
+// tableWriter accumulates rows and renders them column-aligned.
+//
+// text/tabwriter is the obvious tool, but it measures a cell by its rune
+// count — and a colorized cell's runes include its ANSI escape sequence.
+// Every column after a colored STATUS then gets padded for width the
+// terminal never shows, and the headers drift right of the values they
+// name. Measuring with ansi.StringWidth, as truncate already does, is what
+// keeps a colored table aligned.
+type tableWriter struct {
+	rows [][]string
+}
+
+func (t *tableWriter) row(cells ...string) { t.rows = append(t.rows, cells) }
+
+func (t *tableWriter) flush(w io.Writer) {
+	var widths []int
+	for _, r := range t.rows {
+		for i, c := range r {
+			for i >= len(widths) {
+				widths = append(widths, 0)
+			}
+			if n := ansi.StringWidth(c); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+	var b strings.Builder
+	for _, r := range t.rows {
+		b.Reset()
+		for i, c := range r {
+			b.WriteString(c)
+			if i < len(r)-1 {
+				b.WriteString(strings.Repeat(" ", widths[i]-ansi.StringWidth(c)+colPad))
+			}
+		}
+		fmt.Fprintln(w, strings.TrimRight(b.String(), " "))
+	}
+}
+
 func styleStatus(s model.Status, color bool) string {
 	if !color {
 		return string(s)
@@ -83,8 +124,8 @@ func styleStatus(s model.Status, color bool) string {
 
 // PipelineTable renders `pipeline list` rows.
 func PipelineTable(w io.Writer, items []model.PipelineSummary, color bool) {
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ACCOUNT NAME\tACCOUNT ID\tSTATUS\tLAST UPDATE\tEXECUTION")
+	var tw tableWriter
+	tw.row("ACCOUNT NAME", "ACCOUNT ID", "STATUS", "LAST UPDATE", "EXECUTION")
 	for _, p := range items {
 		last, exec := "-", "-"
 		if p.Latest != nil {
@@ -104,9 +145,9 @@ func PipelineTable(w io.Writer, items []model.PipelineSummary, color bool) {
 		if name == "" {
 			name = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, p.AccountID, status, last, exec)
+		tw.row(name, p.AccountID, status, last, exec)
 	}
-	tw.Flush()
+	tw.flush(w)
 }
 
 // PipelineCounts prints the per-status tally (stderr companion of the table).
@@ -159,8 +200,8 @@ func StatusFreshness(w io.Writer, stats model.StatusStats) {
 
 // ReleaseTable renders release results.
 func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ACCOUNT NAME\tACCOUNT ID\tRESULT\tEXECUTION/REASON")
+	var tw tableWriter
+	tw.row("ACCOUNT NAME", "ACCOUNT ID", "RESULT", "EXECUTION/REASON")
 	for _, r := range items {
 		result, detail := "started", shortID(r.ExecutionID)
 		switch {
@@ -183,16 +224,16 @@ func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
 		if name == "" {
 			name = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, r.AccountID, result, detail)
+		tw.row(name, r.AccountID, result, detail)
 	}
-	tw.Flush()
+	tw.flush(w)
 }
 
 // ExecutionTable renders `pipeline executions` rows: one pipeline's runs,
 // newest first.
 func ExecutionTable(w io.Writer, items []model.Execution, color bool) {
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "EXECUTION\tSTATUS\tSTARTED\tDURATION\tREVISION")
+	var tw tableWriter
+	tw.row("EXECUTION", "STATUS", "STARTED", "DURATION", "REVISION")
 	now := time.Now()
 	for _, e := range items {
 		started, duration := "-", "-"
@@ -200,17 +241,17 @@ func ExecutionTable(w io.Writer, items []model.Execution, color bool) {
 			started = humanTime(*e.StartTime)
 			duration = fmtDuration(e.Elapsed(now))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			e.ID, styleStatus(e.Status, color), started, duration, revisionSummary(e.Revisions))
+		tw.row(e.ID, styleStatus(e.Status, color), started, duration,
+			revisionSummary(e.Revisions))
 	}
-	tw.Flush()
+	tw.flush(w)
 }
 
 // ActionExecutionTable renders one execution's per-action runs, including the
 // CodeBuild id that `pipeline logs --build` takes.
 func ActionExecutionTable(w io.Writer, items []model.ActionExecution, color bool) {
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "  STAGE\tACTION\tSTATUS\tDURATION\tBUILD\tDETAIL")
+	var tw tableWriter
+	tw.row("  STAGE", "ACTION", "STATUS", "DURATION", "BUILD", "DETAIL")
 	now := time.Now()
 	for _, a := range items {
 		duration := fmtDuration(a.Elapsed(now))
@@ -225,10 +266,10 @@ func ActionExecutionTable(w io.Writer, items []model.ActionExecution, color bool
 		case a.Summary != "":
 			detail = truncate(a.Summary, 60)
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n",
-			a.StageName, a.ActionName, styleStatus(a.Status, color), duration, build, detail)
+		tw.row("  "+a.StageName, a.ActionName, styleStatus(a.Status, color),
+			duration, build, detail)
 	}
-	tw.Flush()
+	tw.flush(w)
 }
 
 // PipelineDetailText renders `pipeline show` for humans: a header, the
@@ -241,11 +282,11 @@ func PipelineDetailText(w io.Writer, d model.PipelineDetail, color bool) {
 	fmt.Fprintf(w, "Pipeline: %s\n", d.PipelineName)
 	fmt.Fprintf(w, "Account:  %s (%s)\n\n", name, d.AccountID)
 
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "STAGE\tACTION\tSTATUS\tLAST CHANGE\tDETAIL")
+	var tw tableWriter
+	tw.row("STAGE", "ACTION", "STATUS", "LAST CHANGE", "DETAIL")
 	for _, st := range d.Stages {
 		if len(st.Actions) == 0 {
-			fmt.Fprintf(tw, "%s\t-\t%s\t-\t-\n", st.Name, styleStatus(st.Status, color))
+			tw.row(st.Name, "-", styleStatus(st.Status, color), "-", "-")
 			continue
 		}
 		for i, a := range st.Actions {
@@ -257,25 +298,24 @@ func PipelineDetailText(w io.Writer, d model.PipelineDetail, color bool) {
 			if a.LastChange != nil {
 				last = humanTime(*a.LastChange)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-				stageCol, a.Name, styleStatus(a.Status, color), last, actionDetail(a))
+			tw.row(stageCol, a.Name, styleStatus(a.Status, color), last, actionDetail(a))
 		}
 	}
-	tw.Flush()
+	tw.flush(w)
 
 	if len(d.History) > 0 {
 		fmt.Fprintln(w, "\nRecent executions:")
-		htw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(htw, "EXECUTION\tSTATUS\tSTARTED\tREVISION")
+		var htw tableWriter
+		htw.row("EXECUTION", "STATUS", "STARTED", "REVISION")
 		for _, e := range d.History {
 			started := "-"
 			if e.StartTime != nil {
 				started = humanTime(*e.StartTime)
 			}
-			fmt.Fprintf(htw, "%s\t%s\t%s\t%s\n",
-				shortID(e.ID), styleStatus(e.Status, color), started, revisionSummary(e.Revisions))
+			htw.row(shortID(e.ID), styleStatus(e.Status, color), started,
+				revisionSummary(e.Revisions))
 		}
-		htw.Flush()
+		htw.flush(w)
 	}
 }
 
@@ -317,16 +357,16 @@ func truncate(s string, n int) string {
 
 // AccountTable renders `account list`.
 func AccountTable(w io.Writer, items []model.Account) {
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ACCOUNT NAME\tACCOUNT ID\tEMAIL")
+	var tw tableWriter
+	tw.row("ACCOUNT NAME", "ACCOUNT ID", "EMAIL")
 	for _, a := range items {
 		email := a.Email
 		if email == "" {
 			email = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", a.Name, a.ID, email)
+		tw.row(a.Name, a.ID, email)
 	}
-	tw.Flush()
+	tw.flush(w)
 }
 
 // CacheNote prints a staleness banner ("accounts: cached 3h ago ...").

@@ -180,8 +180,14 @@ func (m releaseModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 		}
 		// any other key: back to the list, refreshing the started rows so
 		// they update to InProgress.
+		//
+		// Sequence, not Batch: the two messages have to arrive in this
+		// order. refreshNamesMsg is handled by whichever screen is on top,
+		// so if it overtakes the pop it lands on this screen — which
+		// ignores it — and the list comes back still showing the old
+		// statuses and the old selection, with nothing to correct it.
 		started := startedNames(m.results)
-		return m, tea.Batch(
+		return m, tea.Sequence(
 			func() tea.Msg { return popMsg{} },
 			func() tea.Msg { return refreshNamesMsg{names: started} },
 		)

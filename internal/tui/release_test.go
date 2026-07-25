@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -174,24 +175,36 @@ func TestReleaseConfirmRunDone(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("a key in done should return a command")
 	}
-	msgs, ok := cmd().(tea.BatchMsg)
-	if !ok {
-		t.Fatalf("done key should batch pop + refresh, got %T", cmd())
+	// The two messages must arrive in order, so this has to be a sequence
+	// rather than a batch. refreshNamesMsg is delivered to whichever screen
+	// is on top: if it overtakes the pop it lands on the release screen,
+	// which ignores it, and the list returns still showing the pre-release
+	// statuses and the old selection — with nothing left to correct it.
+	if _, isBatch := cmd().(tea.BatchMsg); isBatch {
+		t.Fatal("done key must emit an ordered sequence (pop then refresh), not an unordered batch")
 	}
-	var gotPop, gotRefresh bool
-	for _, c := range msgs {
+	seq := reflect.ValueOf(cmd())
+	if seq.Kind() != reflect.Slice {
+		t.Fatalf("done key should emit a sequence of commands, got %T", cmd())
+	}
+	var order []string
+	for i := 0; i < seq.Len(); i++ {
+		c, ok := seq.Index(i).Interface().(tea.Cmd)
+		if !ok {
+			t.Fatalf("sequence element %d is %T, want tea.Cmd", i, seq.Index(i).Interface())
+		}
 		switch v := c().(type) {
 		case popMsg:
-			gotPop = true
+			order = append(order, "pop")
 		case refreshNamesMsg:
-			gotRefresh = true
+			order = append(order, "refresh")
 			if len(v.names) != 1 || v.names[0] != alphaPipeline {
 				t.Errorf("refresh names = %v, want just the started pipeline", v.names)
 			}
 		}
 	}
-	if !gotPop || !gotRefresh {
-		t.Errorf("done key should emit both popMsg and refreshNamesMsg (pop=%v refresh=%v)", gotPop, gotRefresh)
+	if len(order) != 2 || order[0] != "pop" || order[1] != "refresh" {
+		t.Errorf("done key emitted %v, want [pop refresh]", order)
 	}
 	_ = ran // begin()'s command runs the batch asynchronously; not awaited here
 }
