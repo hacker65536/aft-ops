@@ -102,7 +102,7 @@ func Execute(ctx context.Context) error {
 	pf.BoolVar(&app.NoColor, "no-color", false, "disable colored output")
 	pf.BoolVar(&app.Refresh, "refresh", false, "bypass caches and refetch")
 	pf.IntVar(&concurrency, "concurrency", 0, "batch concurrency (overrides config)")
-	pf.Float64Var(&rps, "rps", 0, "API requests per second limit (overrides config)")
+	pf.Float64Var(&rps, "rps", 0, "API requests per second limit, 0 = unlimited (overrides config)")
 
 	root.AddCommand(
 		newPipelineCmd(app),

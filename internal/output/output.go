@@ -174,7 +174,14 @@ func PipelineCounts(w io.Writer, items []model.PipelineSummary) {
 	if fetchErrs > 0 {
 		parts = append(parts, fmt.Sprintf("%s=%d", model.StatusFetchError, fetchErrs))
 	}
-	fmt.Fprintf(w, "total=%d %s\n", len(items), strings.Join(parts, " "))
+	// Build the line rather than always interpolating a separator: with no
+	// items there are no parts, and "total=0 " went out with a trailing
+	// space on it.
+	line := fmt.Sprintf("total=%d", len(items))
+	if len(parts) > 0 {
+		line += " " + strings.Join(parts, " ")
+	}
+	fmt.Fprintln(w, line)
 }
 
 // StatusFreshness prints how fresh the listed statuses are: how many were

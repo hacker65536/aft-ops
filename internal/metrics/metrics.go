@@ -23,7 +23,7 @@ type Entry struct {
 	Error      string    `json:"error,omitempty"`
 }
 
-// Recorder appends entries to <dir>/<start-timestamp>.jsonl.
+// Recorder appends entries to <dir>/<start-timestamp>_<pid>.jsonl.
 type Recorder struct {
 	mu   sync.Mutex
 	f    *os.File
@@ -40,7 +40,14 @@ func NewRecorder(dir string, keepRuns int) (*Recorder, error) {
 		return nil, fmt.Errorf("create metrics dir: %w", err)
 	}
 	prune(dir, keepRuns)
-	path := filepath.Join(dir, time.Now().Format("20060102_150405")+".jsonl")
+	// The pid keeps two runs that start in the same second apart. Sharing a
+	// file is not merely untidy: whichever finishes first runs Close, which
+	// removes the file when nothing was recorded — and would unlink the file
+	// the other process is still writing to, losing the rest of its run.
+	// The timestamp stays fixed-width and leading, so LatestFiles still
+	// sorts newest-first by name.
+	name := fmt.Sprintf("%s_%d.jsonl", time.Now().Format("20060102_150405"), os.Getpid())
+	path := filepath.Join(dir, name)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open metrics file: %w", err)

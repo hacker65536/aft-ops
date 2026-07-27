@@ -1,6 +1,10 @@
 package cache
 
 import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,5 +62,39 @@ func TestClearAndEntries(t *testing.T) {
 	entries, _ = s.Entries()
 	if len(entries) != 0 {
 		t.Fatalf("expected empty after clear, got %v", entries)
+	}
+}
+
+// Concurrent writers must not corrupt an entry. The scratch file used to be
+// a fixed "<key>.json.tmp", so two processes writing at once interleaved
+// their bytes and renamed the result into place.
+func TestPutIsSafeUnderConcurrency(t *testing.T) {
+	s := New(t.TempDir(), "p", "r")
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			if err := Put(s, "k", strings.Repeat(fmt.Sprint(n%10), 4096)); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Whichever writer won, the file must be one complete value — not a
+	// splice of two.
+	got, _, ok := Get[string](s, "k", Forever)
+	if !ok {
+		t.Fatal("the entry should be readable after concurrent writes")
+	}
+	if len(got) != 4096 || strings.Trim(got, string(got[0])) != "" {
+		t.Errorf("entry is not a single complete value (len=%d)", len(got))
+	}
+
+	// No scratch files left behind.
+	tmps, _ := filepath.Glob(filepath.Join(s.Dir(), "*.tmp"))
+	if len(tmps) != 0 {
+		t.Errorf("leftover temp files: %v", tmps)
 	}
 }

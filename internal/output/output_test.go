@@ -127,6 +127,14 @@ func TestPipelineCounts(t *testing.T) {
 	if got != want {
 		t.Errorf("counts = %q, want %q", got, want)
 	}
+
+	// Nothing to count: no breakdown, and no separator left dangling after
+	// the total (asserted without TrimSpace, which is what hid this).
+	b.Reset()
+	PipelineCounts(&b, nil)
+	if got := b.String(); got != "total=0\n" {
+		t.Errorf("empty counts = %q, want %q", got, "total=0\n")
+	}
 }
 
 // StatusFreshness reports the core's own numbers, including failed refreshes

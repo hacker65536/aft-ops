@@ -14,10 +14,12 @@ builds:
     binary: aft-ops
     env:
       - CGO_ENABLED=0
+    # macOS and Linux only, matching what the requirements claim support for.
+    # A Windows binary nobody builds against or tests is a support promise
+    # the project has not made.
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -35,9 +37,6 @@ archives:
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-    format_overrides:
-      - goos: windows
-        formats: [zip]
 
 checksum:
   name_template: checksums.txt

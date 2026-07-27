@@ -87,11 +87,26 @@ func Put[T any](s Store, key string, v T) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return err
 	}
-	tmp := s.path(key) + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+	// A unique temp name, not "<key>.tmp": two terminals running a list at
+	// once would otherwise write the same scratch file and rename each
+	// other's half-written bytes into place. The rename is still the atomic
+	// step; this only stops the two writers from sharing a buffer.
+	tmp, err := os.CreateTemp(s.dir, filepath.Base(s.path(key))+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path(key))
+	defer os.Remove(tmp.Name()) // no-op once the rename succeeds
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), s.path(key))
 }
 
 // Invalidate removes one key (missing is fine).
