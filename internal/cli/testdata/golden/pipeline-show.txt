@@ -1,0 +1,21 @@
+$ aft-ops pipeline show payments-stg
+exit 0
+--- stdout ---
+Pipeline: 100000000005-customizations-pipeline
+Account:  payments-stg (100000000005)
+
+STAGE                   ACTION                      STATUS     LAST CHANGE                 DETAIL
+Source                  aft-global-customizations   Succeeded  YYYY-MM-DD HH:MM (21m ago)  feat: add S3 lifecycle rules to the log buckets
+                        aft-account-customizations  Succeeded  YYYY-MM-DD HH:MM (21m ago)  feat: add S3 lifecycle rules to the log buckets
+Global-Customizations   Apply                       Succeeded  YYYY-MM-DD HH:MM (20m ago)  No changes.
+Account-Customizations  Apply                       Failed     YYYY-MM-DD HH:MM (18m ago)  Error while executing command: terraform apply -no-color -a…
+
+Recent executions:
+EXECUTION  STATUS     STARTED                     REVISION
+6884d953   Failed     YYYY-MM-DD HH:MM (22m ago)  feat: add S3 lifecycle rules to the log…
+7f9a39c8   Failed     YYYY-MM-DD HH:MM (2h ago)   chore: bump terraform-aws-modules/vpc t…
+96af9a3d   Succeeded  YYYY-MM-DD HH:MM (26h ago)  feat: add the VPC flow log destination
+adc4fab2   Succeeded  YYYY-MM-DD HH:MM (3d ago)   fix: widen the VPC endpoint policy for …
+c4da5b27   Succeeded  YYYY-MM-DD HH:MM (5d ago)   fix: pin the provider version after the…
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)

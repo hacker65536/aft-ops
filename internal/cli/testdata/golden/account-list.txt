@@ -1,0 +1,48 @@
+$ aft-ops account list
+exit 0
+--- stdout ---
+ACCOUNT NAME        ACCOUNT ID    EMAIL
+analytics-dev       100000000010  aws+analytics-dev@example.com
+analytics-prod      100000000009  aws+analytics-prod@example.com
+api-gateway-prod    100000000024  aws+api-gateway-prod@example.com
+api-gateway-stg     100000000025  aws+api-gateway-stg@example.com
+archive-legacy      100000000041  aws+archive-legacy@example.com
+backup-vault        100000000020  aws+backup-vault@example.com
+batch-jobs          100000000029  aws+batch-jobs@example.com
+billing-ops         100000000019  aws+billing-ops@example.com
+compliance-reports  100000000042  aws+compliance-reports@example.com
+crm-integration     100000000031  aws+crm-integration@example.com
+data-lake-prod      100000000007  aws+data-lake-prod@example.com
+data-lake-stg       100000000008  aws+data-lake-stg@example.com
+dr-standby          100000000040  aws+dr-standby@example.com
+edge-cdn            100000000023  aws+edge-cdn@example.com
+identity-prod       100000000017  aws+identity-prod@example.com
+identity-stg        100000000018  aws+identity-stg@example.com
+log-archive         100000000013  aws+log-archive@example.com
+ml-serving          100000000022  aws+ml-serving@example.com
+ml-training         100000000021  aws+ml-training@example.com
+mobile-backend      100000000033  aws+mobile-backend@example.com
+network-hub-dev     100000000015  aws+network-hub-dev@example.com
+network-hub-prod    100000000014  aws+network-hub-prod@example.com
+notifications       100000000028  aws+notifications@example.com
+partner-portal      100000000032  aws+partner-portal@example.com
+payments-dev        100000000006  aws+payments-dev@example.com
+payments-prod       100000000004  aws+payments-prod@example.com
+payments-stg        100000000005  aws+payments-stg@example.com
+perf-testing        100000000039  aws+perf-testing@example.com
+platform-dev        100000000003  aws+platform-dev@example.com
+platform-prod       100000000001  aws+platform-prod@example.com
+platform-stg        100000000002  aws+platform-stg@example.com
+qa-automation       100000000038  aws+qa-automation@example.com
+reporting           100000000030  aws+reporting@example.com
+sandbox-alice       100000000035  aws+sandbox-alice@example.com
+sandbox-bob         100000000036  aws+sandbox-bob@example.com
+sandbox-carol       100000000037  aws+sandbox-carol@example.com
+search-dev          100000000027  aws+search-dev@example.com
+search-prod         100000000026  aws+search-prod@example.com
+security-audit      100000000011  aws+security-audit@example.com
+security-tooling    100000000012  aws+security-tooling@example.com
+shared-services     100000000016  aws+shared-services@example.com
+web-frontend        100000000034  aws+web-frontend@example.com
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)

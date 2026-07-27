@@ -1,0 +1,9 @@
+$ aft-ops pipeline release payments-stg --dry-run
+exit 0
+--- stdout ---
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+1 target(s):
+ACCOUNT NAME  ACCOUNT ID    STATUS  LAST UPDATE                 EXECUTION
+payments-stg  100000000005  Failed  YYYY-MM-DD HH:MM (18m ago)  6884d953
+dry-run: nothing released

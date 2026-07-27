@@ -1,0 +1,29 @@
+$ aft-ops pipeline executions payments-stg --limit 3 --actions
+exit 0
+--- stdout ---
+EXECUTION                             STATUS  STARTED                     DURATION  REVISION
+6884d953-09b2-409b-8426-0503a816510d  Failed  YYYY-MM-DD HH:MM (22m ago)  3m12s     feat: add S3 lifecycle rules to the log…
+  STAGE                   ACTION                      STATUS     DURATION  BUILD                                                            DETAIL
+  Source                  aft-global-customizations   Succeeded  8s        -                                                                feat: add S3 lifecycle rules to the log buckets
+  Source                  aft-account-customizations  Succeeded  8s        -                                                                feat: add S3 lifecycle rules to the log buckets
+  Global-Customizations   Apply                       Succeeded  1m3s      aft-global-customizations:a4f3ccb5-e799-4e79-a79e-0529f985c9eb   No changes.
+  Account-Customizations  Apply                       Failed     1m53s     aft-account-customizations:432b4666-568c-4568-995a-053d223d865a  Error while executing command: terraform apply -no-color -a…
+
+EXECUTION                             STATUS  STARTED                    DURATION  REVISION
+7f9a39c8-3473-4347-bcd1-056373acff38  Failed  YYYY-MM-DD HH:MM (2h ago)  2m48s     chore: bump terraform-aws-modules/vpc t…
+  STAGE                   ACTION                      STATUS     DURATION  BUILD                                                            DETAIL
+  Source                  aft-global-customizations   Succeeded  8s        -                                                                chore: bump terraform-aws-modules/vpc to 5.13.0
+  Source                  aft-account-customizations  Succeeded  8s        -                                                                chore: bump terraform-aws-modules/vpc to 5.13.0
+  Global-Customizations   Apply                       Succeeded  55s       aft-global-customizations:bc092d2a-125a-4125-a049-0589c51c7816   No changes.
+  Account-Customizations  Apply                       Failed     1m37s     aft-account-customizations:5a40a6db-814d-4814-9205-059cedd43485  Error while executing command: terraform apply -no-color -a…
+
+EXECUTION                             STATUS     STARTED                     DURATION  REVISION
+96af9a3d-5f34-45f3-b57c-05c33f43ad63  Succeeded  YYYY-MM-DD HH:MM (26h ago)  5m41s     feat: add the VPC flow log destination
+  STAGE                   ACTION                      STATUS     DURATION  BUILD                                                            DETAIL
+  Source                  aft-global-customizations   Succeeded  8s        -                                                                feat: add the VPC flow log destination
+  Source                  aft-account-customizations  Succeeded  8s        -                                                                feat: add the VPC flow log destination
+  Global-Customizations   Apply                       Succeeded  1m55s     aft-global-customizations:d31e8d9f-3d1b-43d1-98f4-05e990b32641   No changes.
+  Account-Customizations  Apply                       Succeeded  3m30s     aft-account-customizations:71560750-ac0e-4ac0-8ab0-05fcb96ae2b0  Apply complete! Resources: 2 added, 1 changed, 0 destroyed.
+
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)

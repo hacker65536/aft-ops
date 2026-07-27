@@ -1,0 +1,71 @@
+$ aft-ops pipeline list --account payments -o json
+exit 0
+--- stdout ---
+{
+  "schema_version": 2,
+  "generated_at": "<TIMESTAMP>",
+  "items": [
+    {
+      "pipeline_name": "100000000005-customizations-pipeline",
+      "account_id": "100000000005",
+      "account_name": "payments-stg",
+      "latest_execution": {
+        "id": "6884d953-09b2-409b-8426-0503a816510d",
+        "status": "Failed",
+        "start_time": "<TIMESTAMP>",
+        "last_update": "<TIMESTAMP>",
+        "revisions": [
+          {
+            "action_name": "aft-account-customizations",
+            "revision_id": "d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat: add S3 lifecycle rules to the log buckets\"}",
+            "url": "https://github.com/example-org/aft-account-customizations/commit/d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2"
+          }
+        ]
+      },
+      "status_fetched_at": "<TIMESTAMP>"
+    },
+    {
+      "pipeline_name": "100000000004-customizations-pipeline",
+      "account_id": "100000000004",
+      "account_name": "payments-prod",
+      "latest_execution": {
+        "id": "2344b7f4-896f-4896-9a25-03e44552468c",
+        "status": "Succeeded",
+        "start_time": "<TIMESTAMP>",
+        "last_update": "<TIMESTAMP>",
+        "revisions": [
+          {
+            "action_name": "aft-account-customizations",
+            "revision_id": "5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat(security): enable GuardDuty in every enabled region\"}",
+            "url": "https://github.com/example-org/aft-account-customizations/commit/5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7"
+          }
+        ]
+      },
+      "status_fetched_at": "<TIMESTAMP>"
+    },
+    {
+      "pipeline_name": "100000000006-customizations-pipeline",
+      "account_id": "100000000006",
+      "account_name": "payments-dev",
+      "latest_execution": {
+        "id": "0a1a7c86-34f9-434f-90d3-07a23935143a",
+        "status": "Succeeded",
+        "start_time": "<TIMESTAMP>",
+        "last_update": "<TIMESTAMP>",
+        "revisions": [
+          {
+            "action_name": "aft-account-customizations",
+            "revision_id": "3862f4495e70c5e83179c31760c5e70cc60c5e70",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"fix: allow the org-wide read-only role to assume\"}",
+            "url": "https://github.com/example-org/aft-account-customizations/commit/3862f4495e70c5e83179c31760c5e70cc60c5e70"
+          }
+        ]
+      },
+      "status_fetched_at": "<TIMESTAMP>"
+    }
+  ]
+}
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)

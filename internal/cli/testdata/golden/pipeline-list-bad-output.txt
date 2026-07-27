@@ -1,0 +1,5 @@
+$ aft-ops pipeline list -o yaml
+exit 2
+--- stdout ---
+--- stderr ---
+Error: invalid output format "yaml" (want table|json)

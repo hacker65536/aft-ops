@@ -1,0 +1,51 @@
+$ aft-ops pipeline logs payments-stg
+exit 0
+--- stdout ---
+Initializing modules...
+Downloading registry.terraform.io/terraform-aws-modules/vpc/aws 5.13.0 for vpc...
+- vpc in .terraform/modules/vpc
+- tagging in modules/tagging
+
+Initializing the backend...
+
+Successfully configured the backend "s3"! Terraform will automatically
+use this backend unless the backend configuration changes.
+
+Initializing provider plugins...
+- Finding hashicorp/aws versions matching "~> 5.70"...
+- Installing hashicorp/aws v5.82.2...
+- Installed hashicorp/aws v5.82.2 (signed by HashiCorp)
+
+Terraform has been successfully initialized!
+
+aws_iam_role.aft_customizations: Refreshing state... [id=aft-customizations-role]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # aws_iam_role.incident_response will be created
+  + resource "aws_iam_role" "incident_response" {
+      + arn                   = (known after apply)
+      + name                  = "incident-response"
+      + max_session_duration  = 3600
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+aws_iam_role.incident_response: Creating...
+╷
+│ Error: creating IAM Role (incident-response): operation error IAM: CreateRole,
+│ https response error StatusCode: 409, RequestID: 3f9c1a5e-77b2-4d10-9c33-2b8e5f0a1d64,
+│ EntityAlreadyExists: Role with name incident-response already exists.
+│
+│   with aws_iam_role.incident_response,
+│   on iam.tf line 12, in resource "aws_iam_role" "incident_response":
+│   12: resource "aws_iam_role" "incident_response" {
+│
+╵
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+using failed action "Apply" of stage "Account-Customizations" (build aft-account-customizations:432b4666-568c-4568-995a-053d223d865a)

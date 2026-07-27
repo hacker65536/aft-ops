@@ -1,0 +1,50 @@
+$ aft-ops pipeline list --sort account --order asc
+exit 0
+--- stdout ---
+ACCOUNT NAME        ACCOUNT ID    STATUS      LAST UPDATE                 EXECUTION
+analytics-dev       100000000010  Succeeded   YYYY-MM-DD HH:MM (38h ago)  4d45c2ec
+analytics-prod      100000000009  Succeeded   YYYY-MM-DD HH:MM (33h ago)  0805a18d
+api-gateway-prod    100000000024  Succeeded   YYYY-MM-DD HH:MM (20h ago)  a6badd57
+api-gateway-stg     100000000025  Succeeded   YYYY-MM-DD HH:MM (6h ago)   d4e59e41
+archive-legacy      100000000041  Unknown     -                           -
+backup-vault        100000000020  Succeeded   YYYY-MM-DD HH:MM (11h ago)  638f96f1
+batch-jobs          100000000029  Superseded  YYYY-MM-DD HH:MM (7h ago)   bbbb62d3
+billing-ops         100000000019  Succeeded   YYYY-MM-DD HH:MM (17h ago)  1e4f7592
+compliance-reports  100000000042  Succeeded   YYYY-MM-DD HH:MM (10h ago)  5712751b
+crm-integration     100000000031  Succeeded   YYYY-MM-DD HH:MM (7h ago)   7466667b
+data-lake-prod      100000000007  InProgress  YYYY-MM-DD HH:MM (6m ago)   4f5a9de5
+data-lake-stg       100000000008  Succeeded   YYYY-MM-DD HH:MM (9h ago)   abb01fb9
+dr-standby          100000000040  Succeeded   YYYY-MM-DD HH:MM (2h ago)   28e7b431
+edge-cdn            100000000023  Succeeded   YYYY-MM-DD HH:MM (31h ago)  617abbf8
+identity-prod       100000000017  Succeeded   YYYY-MM-DD HH:MM (33h ago)  aae49349
+identity-stg        100000000018  Succeeded   YYYY-MM-DD HH:MM (13h ago)  f024b4a8
+log-archive         100000000013  Succeeded   YYYY-MM-DD HH:MM (20h ago)  1d062709
+ml-serving          100000000022  Succeeded   YYYY-MM-DD HH:MM (12h ago)  05253a24
+ml-training         100000000021  Failed      YYYY-MM-DD HH:MM (43m ago)  a8cfb850
+mobile-backend      100000000033  Succeeded   YYYY-MM-DD HH:MM (13h ago)  d0bbe84f
+network-hub-dev     100000000015  Failed      YYYY-MM-DD HH:MM (3h ago)   a78669c7
+network-hub-prod    100000000014  Succeeded   YYYY-MM-DD HH:MM (20h ago)  62464868
+notifications       100000000028  Succeeded   YYYY-MM-DD HH:MM (40h ago)  8d90a1e9
+partner-portal      100000000032  Succeeded   YYYY-MM-DD HH:MM (9h ago)   a2912765
+payments-dev        100000000006  Succeeded   YYYY-MM-DD HH:MM (20h ago)  0a1a7c86
+payments-prod       100000000004  Succeeded   YYYY-MM-DD HH:MM (20h ago)  2344b7f4
+payments-stg        100000000005  Failed      YYYY-MM-DD HH:MM (18m ago)  6884d953
+perf-testing        100000000039  Stopped     YYYY-MM-DD HH:MM (4h ago)   b57cd1e8
+platform-dev        100000000003  Succeeded   YYYY-MM-DD HH:MM (16h ago)  f519f70a
+platform-prod       100000000001  Succeeded   YYYY-MM-DD HH:MM (38h ago)  3c6ef362
+platform-stg        100000000002  Succeeded   YYYY-MM-DD HH:MM (19h ago)  98c47536
+qa-automation       100000000038  Failed      YYYY-MM-DD HH:MM (5h ago)   703cb089
+reporting           100000000030  Succeeded   YYYY-MM-DD HH:MM (34h ago)  2f26451c
+sandbox-alice       100000000035  Succeeded   YYYY-MM-DD HH:MM (31h ago)  8966ebf7
+sandbox-bob         100000000036  Succeeded   YYYY-MM-DD HH:MM (28h ago)  e5bc6dcb
+sandbox-carol       100000000037  Succeeded   YYYY-MM-DD HH:MM (3h ago)   13e72eb5
+search-dev          100000000027  InProgress  YYYY-MM-DD HH:MM (2m ago)   4850808a
+search-prod         100000000026  Succeeded   YYYY-MM-DD HH:MM (34h ago)  1a25bfa0
+security-audit      100000000011  Succeeded   YYYY-MM-DD HH:MM (33h ago)  9285e44b
+security-tooling    100000000012  Succeeded   YYYY-MM-DD HH:MM (20h ago)  eedb661f
+shared-services     100000000016  Succeeded   YYYY-MM-DD HH:MM (18h ago)  7cb9d25f
+web-frontend        100000000034  Succeeded   YYYY-MM-DD HH:MM (29h ago)  2d116a23
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=42 Succeeded=33 Failed=4 InProgress=2 Stopped=1 Superseded=1 Unknown=1
+statuses: 42 refetched

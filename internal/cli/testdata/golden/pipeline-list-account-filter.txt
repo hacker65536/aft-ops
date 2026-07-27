@@ -1,0 +1,11 @@
+$ aft-ops pipeline list --account payments
+exit 0
+--- stdout ---
+ACCOUNT NAME   ACCOUNT ID    STATUS     LAST UPDATE                 EXECUTION
+payments-stg   100000000005  Failed     YYYY-MM-DD HH:MM (18m ago)  6884d953
+payments-prod  100000000004  Succeeded  YYYY-MM-DD HH:MM (20h ago)  2344b7f4
+payments-dev   100000000006  Succeeded  YYYY-MM-DD HH:MM (20h ago)  0a1a7c86
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=3 Succeeded=2 Failed=1
+statuses: 42 refetched

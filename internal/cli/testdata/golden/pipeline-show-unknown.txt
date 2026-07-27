@@ -1,0 +1,6 @@
+$ aft-ops pipeline show no-such-account
+exit 2
+--- stdout ---
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+Error: no pipeline matches "no-such-account"

@@ -1,0 +1,12 @@
+$ aft-ops pipeline list --status Failed
+exit 0
+--- stdout ---
+ACCOUNT NAME     ACCOUNT ID    STATUS  LAST UPDATE                 EXECUTION
+payments-stg     100000000005  Failed  YYYY-MM-DD HH:MM (18m ago)  6884d953
+ml-training      100000000021  Failed  YYYY-MM-DD HH:MM (43m ago)  a8cfb850
+network-hub-dev  100000000015  Failed  YYYY-MM-DD HH:MM (3h ago)   a78669c7
+qa-automation    100000000038  Failed  YYYY-MM-DD HH:MM (5h ago)   703cb089
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=4 Failed=4
+statuses: 42 refetched

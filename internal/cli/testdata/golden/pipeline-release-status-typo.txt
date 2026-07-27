@@ -1,0 +1,8 @@
+$ aft-ops pipeline release --status Faild --dry-run
+exit 0
+--- stdout ---
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+refetching statuses so --status selects on current state…
+statuses: 42 refetched
+no matching targets
