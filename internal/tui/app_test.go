@@ -239,3 +239,43 @@ func TestNavDots(t *testing.T) {
 		}
 	}
 }
+
+// ctrl+c must quit from inside the filter input too.
+//
+// bubbletea runs the terminal in raw mode, so no SIGINT is delivered: if the
+// key is not bound here, the only exits are esc (which also discards the
+// filter) or killing the process from another shell. The log screen's search
+// mode has always bound it; the list filter had not.
+func TestCtrlCQuitsWhileFiltering(t *testing.T) {
+	m := testModel(t, nil)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = next.(uiModel)
+	if !m.filtering {
+		t.Fatal("/ should enter filter input mode")
+	}
+	// Type something first: the bug only bites once the textinput has focus
+	// and is swallowing every key that is not esc or enter.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = next.(uiModel)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c while filtering should return a command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+c while filtering should quit, got %T", cmd())
+	}
+}
+
+// ctrl+c still quits from the normal (non-filtering) list.
+func TestCtrlCQuitsFromList(t *testing.T) {
+	m := testModel(t, nil)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c should return a command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+c should quit, got %T", cmd())
+	}
+}

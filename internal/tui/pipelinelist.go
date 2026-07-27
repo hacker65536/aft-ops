@@ -336,6 +336,12 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 	if m.filtering {
 		switch msg.String() {
+		case "ctrl+c":
+			// Not just a shortcut: bubbletea puts the terminal in raw mode,
+			// so no SIGINT arrives and this is the only way out short of
+			// killing the process from another shell. The log screen's
+			// search mode already binds it; only this one was missing.
+			return m, tea.Quit
 		case "esc":
 			m.filtering = false
 			m.filter.Blur()
