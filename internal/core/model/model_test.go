@@ -1,6 +1,8 @@
 package model
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -249,5 +251,68 @@ func TestFilterableStatusesRoundTrip(t *testing.T) {
 		if err != nil || got != s {
 			t.Errorf("ParseStatusFilter(%q) = %q, %v", s, got, err)
 		}
+	}
+}
+
+// JSON carries both the raw provider summary and the unwrapped message, so
+// a consumer never has to parse JSON out of a JSON string field.
+func TestRevisionMarshalJSON(t *testing.T) {
+	raw := `{"ProviderType":"GitHub","CommitMessage":"feat: add lifecycle rules"}`
+	b, err := json.Marshal(Revision{
+		ActionName: "aft-account-customizations",
+		RevisionID: "d133fd6",
+		Summary:    raw,
+		URL:        "https://example.invalid/commit/d133fd6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["message"] != "feat: add lifecycle rules" {
+		t.Errorf("message = %v", got["message"])
+	}
+	// The raw summary must survive: dropping it would be a schema break,
+	// and it is the only place ProviderType is recorded.
+	if got["summary"] != raw {
+		t.Errorf("summary must be kept verbatim, got %v", got["summary"])
+	}
+	for _, k := range []string{"action_name", "revision_id", "url"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("%s was lost by the custom marshaler", k)
+		}
+	}
+
+	// A plain-text summary duplicates into message; an empty one is omitted
+	// rather than emitted as "".
+	b, _ = json.Marshal(Revision{Summary: "fix vpc"})
+	if !strings.Contains(string(b), `"message":"fix vpc"`) {
+		t.Errorf("plain summary should still yield a message: %s", b)
+	}
+	b, _ = json.Marshal(Revision{})
+	if strings.Contains(string(b), "message") {
+		t.Errorf("an empty revision should omit message: %s", b)
+	}
+}
+
+// Revisions travel through the disk cache as JSON. The extra field must not
+// break the round trip.
+func TestRevisionJSONRoundTrip(t *testing.T) {
+	in := Revision{RevisionID: "abc", Summary: `{"ProviderType":"GitHub","CommitMessage":"hi"}`}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Revision
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out != in {
+		t.Errorf("round trip: %+v != %+v", out, in)
+	}
+	if out.Message() != "hi" {
+		t.Errorf("Message() after round trip = %q", out.Message())
 	}
 }

@@ -303,6 +303,13 @@ aft-ops version / completion
 
 - 全コマンド共通 `--output table|json`（既定: TTY なら table、パイプなら json も検討 → 混乱を避け**既定は常に table、json は明示**とする）
 - JSON はスキーマに `schema_version` を含め、後方互換を維持
+- **プロバイダ生の値を JSON 消費者に押し付けない**: `revisions[].summary` は
+  CodeConnections では `{"ProviderType":"GitHub","CommitMessage":"…"}` という
+  「JSON 文字列の中の JSON」で降ってくる。table / TUI は `UnwrapProviderSummary` で
+  展開しているので、**JSON の消費者だけが二重パースを強いられる**のは境界の設計として
+  一貫しない。`revisions[].message` に展開済みの値を併記する（`summary` は
+  `ProviderType` を持つ唯一の場所なので残す。追加であって置換ではないため
+  `schema_version` は据え置き）
 - 装飾（色・スピナー）は TTY 検知で自動 off、`--no-color` あり
 - stderr = 進捗・診断、stdout = データ。パイプ処理を壊さない
 

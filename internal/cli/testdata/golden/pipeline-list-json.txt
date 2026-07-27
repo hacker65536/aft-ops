@@ -19,7 +19,8 @@ exit 0
             "action_name": "aft-account-customizations",
             "revision_id": "d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2",
             "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat: add S3 lifecycle rules to the log buckets\"}",
-            "url": "https://github.com/example-org/aft-account-customizations/commit/d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2"
+            "url": "https://github.com/example-org/aft-account-customizations/commit/d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2",
+            "message": "feat: add S3 lifecycle rules to the log buckets"
           }
         ]
       },
@@ -39,7 +40,8 @@ exit 0
             "action_name": "aft-account-customizations",
             "revision_id": "5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7",
             "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat(security): enable GuardDuty in every enabled region\"}",
-            "url": "https://github.com/example-org/aft-account-customizations/commit/5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7"
+            "url": "https://github.com/example-org/aft-account-customizations/commit/5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7",
+            "message": "feat(security): enable GuardDuty in every enabled region"
           }
         ]
       },
@@ -59,7 +61,8 @@ exit 0
             "action_name": "aft-account-customizations",
             "revision_id": "3862f4495e70c5e83179c31760c5e70cc60c5e70",
             "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"fix: allow the org-wide read-only role to assume\"}",
-            "url": "https://github.com/example-org/aft-account-customizations/commit/3862f4495e70c5e83179c31760c5e70cc60c5e70"
+            "url": "https://github.com/example-org/aft-account-customizations/commit/3862f4495e70c5e83179c31760c5e70cc60c5e70",
+            "message": "fix: allow the org-wide read-only role to assume"
           }
         ]
       },

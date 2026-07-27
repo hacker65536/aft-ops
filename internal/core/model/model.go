@@ -153,6 +153,24 @@ func (r Revision) Message() string {
 	return UnwrapProviderSummary(r.Summary)
 }
 
+// MarshalJSON adds the unwrapped message alongside the raw summary.
+//
+// The table and TUI renderers call Message(); without this the JSON output
+// —- the surface documented as a stable schema for automation —- was the
+// only consumer left to parse a provider's JSON-inside-a-string itself.
+// The raw summary stays, so this is additive and schema_version holds.
+//
+// Derived at marshal time rather than stored in a field: a field cannot be
+// named Message alongside the method, and more to the point every site that
+// builds a Revision would then have to remember to populate it.
+func (r Revision) MarshalJSON() ([]byte, error) {
+	type alias Revision // shed the method set, or this recurses
+	return json.Marshal(struct {
+		alias
+		Message string `json:"message,omitempty"`
+	}{alias(r), r.Message()})
+}
+
 // UnwrapProviderSummary returns the human-readable message behind a
 // provider-supplied summary string. CodeConnections sources (e.g. GitHub)
 // deliver both SourceRevision.RevisionSummary and the source action's
