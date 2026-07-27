@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -241,7 +242,7 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVarP(&statusFilter, "status", "s", nil,
-		"filter by status, comma-separated: "+statusFlagValues())
+		"filter by status, comma-separated:\n"+statusFlagValues())
 	cmd.Flags().StringVarP(&accountQuery, "account", "a", "",
 		"filter by account id or name substring")
 	cmd.Flags().BoolVar(&failOnError, "fail-on-error", false,
@@ -648,13 +649,19 @@ func clearProgress(app *App) {
 }
 
 // statusFlagValues lists the accepted --status values for the flag help, so
-// the set a typo is rejected against is the set the help shows.
+// the set a typo is rejected against is the set the help shows. It wraps:
+// all ten on one line runs off the side of any terminal.
 func statusFlagValues() string {
-	names := make([]string, len(model.FilterableStatuses))
-	for i, s := range model.FilterableStatuses {
-		names[i] = string(s)
+	const perLine = 5
+	var lines []string
+	for chunk := range slices.Chunk(model.FilterableStatuses, perLine) {
+		names := make([]string, len(chunk))
+		for i, s := range chunk {
+			names[i] = string(s)
+		}
+		lines = append(lines, strings.Join(names, "|"))
 	}
-	return strings.Join(names, "|")
+	return strings.Join(lines, "|\n")
 }
 
 // parseStatusFilters validates a --status list and returns the canonical
@@ -821,7 +828,7 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 		},
 	}
 	cmd.Flags().StringSliceVarP(&statusFilter, "status", "s", nil,
-		"select targets by current status, comma-separated: "+statusFlagValues())
+		"select targets by current status, comma-separated:\n"+statusFlagValues())
 	cmd.Flags().StringVarP(&fromFile, "file", "f", "",
 		"read targets from file, one per line (\"-\" for stdin)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show targets without releasing")
