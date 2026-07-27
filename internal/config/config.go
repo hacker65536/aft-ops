@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -207,51 +209,112 @@ func (c *Config) EffectiveWriteProfile() string {
 	return c.Profile
 }
 
-// applyEnv overlays the AFT_OPS_* environment on top of the file.
+// EnvPrefix starts the environment name of every configuration key.
+const EnvPrefix = "AFT_OPS_"
+
+// EnvName returns the variable that overrides one configuration key, derived
+// from its YAML path: "cache.status_ttl" → "AFT_OPS_CACHE_STATUS_TTL".
+//
+// The mapping is a rule rather than a list on purpose. It used to be a
+// hand-written sequence of nine lookups with names that had drifted from the
+// keys they set (batch.concurrency was AFT_OPS_CONCURRENCY, cache.status_ttl
+// was AFT_OPS_STATUS_TTL, but cache.dir was AFT_OPS_CACHE_DIR), while the
+// other thirteen keys had no variable at all — even though the documented
+// precedence promised one for everything. Deriving the name means a new
+// field is overridable the moment it is declared, and the documentation
+// stays true without anyone maintaining it.
+//
+// AFT_OPS_DEMO and AFT_OPS_DEMO_LATENCY are not covered here: they select a
+// test fixture rather than set a configuration key.
+func EnvName(yamlPath string) string {
+	return EnvPrefix + strings.ToUpper(strings.ReplaceAll(yamlPath, ".", "_"))
+}
+
+// applyEnv overlays the AFT_OPS_* environment on top of the file, one
+// variable per configuration key.
 //
 // A value that will not parse is an error, not something to step over. The
 // numeric keys used to assign only when err == nil, so AFT_OPS_RPS=x ran at
 // the configured rate and said nothing — the operator gets the behavior they
 // asked to change, with no sign their request was ever read.
 func applyEnv(c *Config) error {
-	if v := os.Getenv("AFT_OPS_PROFILE"); v != "" {
-		c.Profile = v
-	}
-	if v := os.Getenv("AFT_OPS_WRITE_PROFILE"); v != "" {
-		c.WriteProfile = v
-	}
-	if v := os.Getenv("AFT_OPS_REGION"); v != "" {
-		c.Region = v
-	}
-	if v := os.Getenv("AFT_OPS_AWS_CONFIG_FILE"); v != "" {
-		c.AWSConfigFile = v
-	}
-	if v := os.Getenv("AFT_OPS_ACCOUNT_SOURCE"); v != "" {
-		c.AccountSource = AccountSource(v)
-	}
-	if v := os.Getenv("AFT_OPS_CACHE_DIR"); v != "" {
-		c.Cache.Dir = v
-	}
-	if v := os.Getenv("AFT_OPS_STATUS_TTL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return envErr("AFT_OPS_STATUS_TTL", v, "a duration such as 10m or 0")
+	return walkFields(reflect.ValueOf(c).Elem(), "", func(path string, f reflect.Value) error {
+		key := EnvName(path)
+		v := os.Getenv(key)
+		if v == "" {
+			return nil
 		}
-		c.Cache.StatusTTL = Duration(d)
-	}
-	if v := os.Getenv("AFT_OPS_CONCURRENCY"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return envErr("AFT_OPS_CONCURRENCY", v, "an integer")
+		return setFromString(f, key, v)
+	})
+}
+
+// walkFields visits every leaf field of a config struct, passing its dotted
+// YAML path. Nested structs are descended into; every other type is a leaf
+// (Duration is one despite wrapping an integer).
+func walkFields(v reflect.Value, prefix string, fn func(path string, f reflect.Value) error) error {
+	t := v.Type()
+	for i := range t.NumField() {
+		sf := t.Field(i)
+		tag, _, _ := strings.Cut(sf.Tag.Get("yaml"), ",")
+		if tag == "" || tag == "-" {
+			continue
 		}
-		c.Batch.Concurrency = n
-	}
-	if v := os.Getenv("AFT_OPS_RPS"); v != "" {
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return envErr("AFT_OPS_RPS", v, "a number, 0 for unlimited")
+		path := tag
+		if prefix != "" {
+			path = prefix + "." + tag
 		}
-		c.Batch.RPS = f
+		f := v.Field(i)
+		if f.Kind() == reflect.Struct && f.Type() != reflect.TypeOf(Duration(0)) {
+			if err := walkFields(f, path, fn); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := fn(path, f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var durationType = reflect.TypeOf(Duration(0))
+
+// setFromString parses one environment value into one config field. An
+// unhandled kind is a programming error rather than an operator error: a new
+// field type has to be taught here before it can be set from the environment,
+// and failing loudly is what keeps EnvName's promise honest.
+func setFromString(f reflect.Value, key, raw string) error {
+	if f.Type() == durationType {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return envErr(key, raw, "a duration such as 10m or 0")
+		}
+		f.SetInt(int64(d))
+		return nil
+	}
+	switch f.Kind() {
+	case reflect.String:
+		f.SetString(raw)
+	case reflect.Int, reflect.Int64:
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return envErr(key, raw, "an integer")
+		}
+		f.SetInt(n)
+	case reflect.Float64:
+		x, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return envErr(key, raw, "a number")
+		}
+		f.SetFloat(x)
+	case reflect.Bool:
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return envErr(key, raw, "true or false")
+		}
+		f.SetBool(b)
+	default:
+		return fmt.Errorf("config: %s cannot be set from the environment (%s)", key, f.Kind())
 	}
 	return nil
 }

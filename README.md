@@ -125,6 +125,12 @@ Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
 
 `~/.config/aft-ops/config.yaml` (all keys optional; flags > `AFT_OPS_*` env > file > defaults):
 
+Every key can be set from the environment, and the variable's name is derived
+from the key's path — `AFT_OPS_` plus the path in upper snake case, so
+`cache.status_ttl` is `AFT_OPS_CACHE_STATUS_TTL` and `profile` is
+`AFT_OPS_PROFILE`. There is no list to consult and no key left out. A value
+that does not parse stops the run rather than being ignored.
+
 ```yaml
 profile: my-aft-management-profile
 region: ap-northeast-1

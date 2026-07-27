@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -210,9 +211,11 @@ func TestExpandHome(t *testing.T) {
 // value and never said the request had been dropped.
 func TestEnvParseFailuresAreErrors(t *testing.T) {
 	cases := []struct{ key, value string }{
-		{"AFT_OPS_STATUS_TTL", "1z"},
-		{"AFT_OPS_CONCURRENCY", "abc"},
-		{"AFT_OPS_RPS", "x"},
+		{"AFT_OPS_CACHE_STATUS_TTL", "1z"},
+		{"AFT_OPS_BATCH_CONCURRENCY", "abc"},
+		{"AFT_OPS_BATCH_RPS", "x"},
+		{"AFT_OPS_RELEASE_SKIP_IN_PROGRESS", "sometimes"},
+		{"AFT_OPS_METRICS_KEEP_RUNS", "many"},
 	}
 	for _, c := range cases {
 		t.Run(c.key, func(t *testing.T) {
@@ -234,9 +237,9 @@ func TestEnvParseFailuresAreErrors(t *testing.T) {
 // Valid values still apply, so the check above is not passing by rejecting
 // everything.
 func TestEnvNumericValuesApply(t *testing.T) {
-	t.Setenv("AFT_OPS_STATUS_TTL", "0")
-	t.Setenv("AFT_OPS_CONCURRENCY", "3")
-	t.Setenv("AFT_OPS_RPS", "0")
+	t.Setenv("AFT_OPS_CACHE_STATUS_TTL", "0")
+	t.Setenv("AFT_OPS_BATCH_CONCURRENCY", "3")
+	t.Setenv("AFT_OPS_BATCH_RPS", "0")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -249,5 +252,114 @@ func TestEnvNumericValuesApply(t *testing.T) {
 	}
 	if cfg.Batch.RPS != 0 {
 		t.Errorf("rps = %v, want 0 (unlimited)", cfg.Batch.RPS)
+	}
+}
+
+// The name is derived from the YAML path, so these are documentation as much
+// as assertions: nesting joins with an underscore, and a key that is already
+// top-level keeps its plain name.
+func TestEnvName(t *testing.T) {
+	cases := map[string]string{
+		"profile":              "AFT_OPS_PROFILE",
+		"aws_config_file":      "AFT_OPS_AWS_CONFIG_FILE",
+		"batch.concurrency":    "AFT_OPS_BATCH_CONCURRENCY",
+		"cache.status_ttl":     "AFT_OPS_CACHE_STATUS_TTL",
+		"release.max_targets":  "AFT_OPS_RELEASE_MAX_TARGETS",
+		"tui.poll_interval":    "AFT_OPS_TUI_POLL_INTERVAL",
+		"metrics.keep_runs":    "AFT_OPS_METRICS_KEEP_RUNS",
+		"static_accounts_file": "AFT_OPS_STATIC_ACCOUNTS_FILE",
+	}
+	for path, want := range cases {
+		if got := EnvName(path); got != want {
+			t.Errorf("EnvName(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// configPaths lists every leaf key's YAML path, using the same walk applyEnv
+// does.
+func configPaths(t *testing.T) []string {
+	t.Helper()
+	var cfg Config
+	var paths []string
+	err := walkFields(reflect.ValueOf(&cfg).Elem(), "", func(path string, _ reflect.Value) error {
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walkFields: %v", err)
+	}
+	return paths
+}
+
+// fieldAt returns the leaf field at a YAML path.
+func fieldAt(t *testing.T, cfg *Config, want string) reflect.Value {
+	t.Helper()
+	var found reflect.Value
+	_ = walkFields(reflect.ValueOf(cfg).Elem(), "", func(path string, f reflect.Value) error {
+		if path == want {
+			found = f
+		}
+		return nil
+	})
+	if !found.IsValid() {
+		t.Fatalf("no field at %q", want)
+	}
+	return found
+}
+
+// The documented precedence promises an environment override for every key,
+// so every key has to actually have one. This is the test that keeps the
+// promise true as fields are added: a new field with no decoder for its type
+// fails here rather than being quietly unsettable.
+func TestEveryConfigKeyIsSettableFromTheEnvironment(t *testing.T) {
+	// One sample per type, chosen to differ from every default so that
+	// "applied" is distinguishable from "left alone".
+	sample := func(f reflect.Value) (string, any) {
+		switch {
+		case f.Type() == durationType:
+			return "7m", Duration(7 * time.Minute)
+		case f.Kind() == reflect.String:
+			return "sample-value", "sample-value"
+		case f.Kind() == reflect.Int || f.Kind() == reflect.Int64:
+			return "17", int64(17)
+		case f.Kind() == reflect.Float64:
+			return "1.5", 1.5
+		case f.Kind() == reflect.Bool:
+			return "false", false
+		}
+		t.Fatalf("no sample for kind %s; teach setFromString and this test about it", f.Kind())
+		return "", nil
+	}
+
+	for _, path := range configPaths(t) {
+		t.Run(path, func(t *testing.T) {
+			cfg := Default()
+			f := fieldAt(t, &cfg, path)
+			raw, s := sample(f)
+			// Named types (AccountSource, Duration) and int widths differ
+			// from the sample's own type; compare in the field's terms.
+			want := reflect.ValueOf(s).Convert(f.Type()).Interface()
+			t.Setenv(EnvName(path), raw)
+			// applyEnv rather than Load: Validate rejects placeholder values
+			// for account_source and aws_config_file, and the overlay is what
+			// is under test.
+			if err := applyEnv(&cfg); err != nil {
+				t.Fatalf("applyEnv: %v", err)
+			}
+			got := fieldAt(t, &cfg, path).Interface()
+			if got != want {
+				t.Errorf("%s = %v (%T), want %v", EnvName(path), got, got, want)
+			}
+		})
+	}
+}
+
+// Every key means every key: a count that drops is a field that stopped being
+// reachable, which is exactly the drift the derived names exist to prevent.
+func TestConfigKeyCount(t *testing.T) {
+	if got := len(configPaths(t)); got != 22 {
+		t.Errorf("walked %d config keys, want 22 — if a field was added or "+
+			"removed on purpose, update this count and the README table", got)
 	}
 }

@@ -296,7 +296,8 @@ aft-ops pipeline release [targets...]   # F3: Release change
     --file targets.txt | -       # 明示リスト（stdin 可）
     --expect N                   # 対象が N 件でなければ exit 2
     --dry-run / --yes
-    --concurrency N --chunk-size N --chunk-pause 30s
+    --concurrency N              # グローバルフラグ。chunk_size / chunk_pause は
+                                 # 設定ファイルか env（AFT_OPS_BATCH_CHUNK_SIZE 等）で指定
 
 aft-ops account list
 aft-ops cache status|clear|refresh
@@ -489,9 +490,19 @@ TUI の各操作は core 層サービス呼び出しであり、CLI と完全に
 
 優先順位: **flag > 環境変数 (`AFT_OPS_*`) > 設定ファイル > 既定値**
 
-- **環境変数のパース失敗は握りつぶさない**: `AFT_OPS_RPS=x` のような値はキー名・実際の値・
-  期待する形式を出して exit 2。以前は「パースできたときだけ代入」だったため、**指定した
-  つもりの設定が無言で無視される**（要件 §6「silent failure 禁止」に反する）
+- **環境変数名は YAML パスから機械的に決まる**: `AFT_OPS_` + パスの大文字スネーク。
+  `cache.status_ttl` → `AFT_OPS_CACHE_STATUS_TTL`、`profile` → `AFT_OPS_PROFILE`。
+  **全設定キーに例外なく対応する**（`config.EnvName` が唯一の規則で、struct を歩いて適用する）。
+  - 以前は 9 キーだけを手書きで拾っており、しかも名前がキーからずれていた
+    （`batch.concurrency` が `AFT_OPS_CONCURRENCY`、`cache.status_ttl` が `AFT_OPS_STATUS_TTL`、
+    なのに `cache.dir` は `AFT_OPS_CACHE_DIR`）。残り 13 キーには変数が無いのに、
+    上記の優先順位は全キーに env があるかのように書かれていた。規則で導出すれば
+    **フィールドを足した瞬間に env が効き**、ドキュメントが保守なしで真であり続ける
+  - `AFT_OPS_DEMO` / `AFT_OPS_DEMO_LATENCY` はこの規則の外（設定キーではなく
+    fixture の選択なので）
+- **環境変数のパース失敗は握りつぶさない**: `AFT_OPS_BATCH_RPS=x` のような値はキー名・
+  実際の値・期待する形式を出して exit 2。以前は「パースできたときだけ代入」だったため、
+  **指定したつもりの設定が無言で無視される**（要件 §6「silent failure 禁止」に反する）
 - **検証は flag マージの後にもう一度走る**: flag は `config.Load` が返った後に載せるので、
   1 回だけでは `--concurrency 0` のような値が検証を素通りして既定値に戻っていた
 

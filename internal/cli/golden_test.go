@@ -132,7 +132,7 @@ func runCLI(t *testing.T, args ...string) result {
 	// a real account's throttling limits, would otherwise make a suite of
 	// full fan-outs take a minute. Neither changes what is printed.
 	t.Setenv("AFT_OPS_DEMO_LATENCY", "0s")
-	t.Setenv("AFT_OPS_RPS", "0")
+	t.Setenv("AFT_OPS_BATCH_RPS", "0")
 
 	stdout := filepath.Join(root, "stdout")
 	stderr := filepath.Join(root, "stderr")
