@@ -279,3 +279,28 @@ func TestCtrlCQuitsFromList(t *testing.T) {
 		t.Errorf("ctrl+c should quit, got %T", cmd())
 	}
 }
+
+// A row whose status could not be fetched shows fetch-error, and the cursor
+// highlight over it says the same thing the cell does.
+func TestFetchErrorRowStatusAndTint(t *testing.T) {
+	m := newModel(context.Background(), Deps{})
+	broken := sum("333333333333-customizations-pipeline", "333333333333", "charlie", model.StatusSucceeded)
+	broken.FetchError = "AccessDenied"
+	m.items = []model.PipelineSummary{broken}
+	(&m).applyFilter()
+
+	if got := rowStatus(broken); got != model.StatusFetchError {
+		t.Errorf("rowStatus = %q, want fetch-error even though Latest says Succeeded", got)
+	}
+	if len(m.visible) != 1 {
+		t.Fatalf("visible = %d, want 1", len(m.visible))
+	}
+	if got := m.table.Rows()[0][listStatusCol]; got != string(model.StatusFetchError) {
+		t.Errorf("STATUS cell = %q, want fetch-error", got)
+	}
+	m.table.SetCursor(0)
+	(&m).syncCursor()
+	if !m.cursor.failed {
+		t.Error("the cursor highlight should mark a fetch-error row as needing attention")
+	}
+}

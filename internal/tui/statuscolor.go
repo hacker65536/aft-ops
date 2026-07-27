@@ -15,9 +15,18 @@ import (
 // laid-out view rather than to the row values: bubbles' table truncates each
 // cell with a width helper that counts escape bytes as visible width, so a
 // pre-styled value comes back mangled ("\x1b[31mFailed\x1b[…").
+//
+// The cost of that choice is a dependency on how bubbles lays a row out —
+// each cell padded by one space on each side, zero-width columns dropped —
+// which cellStart below reimplements. Nothing enforces the agreement, so a
+// bubbles upgrade can shift the offsets and quietly color the wrong column.
+// go.mod pins bubbles for that reason; if you raise it, suspect
+// TestCellStartRendersWhereBubblesPuts (which measures a real rendered row
+// rather than trusting the constant), TestCellStartAndText, and
+// TestSyncCursorTint before anything else.
 var (
-	// failedColor reddens a STATUS cell that reads "Failed" — the one status
-	// an operator scans a list for.
+	// failedColor reddens an alarming STATUS cell — the thing an operator
+	// scans a list for.
 	failedColor = lipgloss.Color("1")
 	// selectedRowStyle marks a row picked for release (the list's space key).
 	// A whole-row highlight rather than a marker column: it reads at a glance
@@ -25,6 +34,16 @@ var (
 	selectedRowStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
 )
+
+// alarming reports whether a STATUS cell should be reddened.
+//
+// fetch-error is not a CodePipeline status; it is what the tables print for a
+// row whose status could not be retrieved. The CLI table has always reddened
+// it, and a row the tool could not read is exactly as worth noticing as one
+// that failed — dimming it in the TUI only made the two views disagree.
+func alarming(s model.Status) bool {
+	return s == model.StatusFailed || s == model.StatusFetchError
+}
 
 // cursorTint is what the cursor row's highlight has to convey beyond "the
 // cursor is here": the run failed, and (on the list) the row is picked for
@@ -122,7 +141,7 @@ func styleTableView(view string, cols []table.Column, statusCol, keyCol int, row
 			cell, tail, okCell = cutAtWidth(rest, width)
 		}
 		word := strings.TrimSpace(cell)
-		if !okCell || model.Status(word) != model.StatusFailed {
+		if !okCell || !alarming(model.Status(word)) {
 			if hasBase {
 				lines[i] = renderSpan(base, ln)
 			}

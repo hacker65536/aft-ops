@@ -438,6 +438,17 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 	return m, cmd
 }
 
+// rowStatus is what the STATUS cell shows for a pipeline: its execution
+// status, or fetch-error when the status could not be retrieved at all.
+// One function so the cell text and everything keyed off it — the coloring,
+// the cursor highlight — cannot drift apart. Matches the CLI table.
+func rowStatus(p model.PipelineSummary) model.Status {
+	if p.FetchError != "" {
+		return model.StatusFetchError
+	}
+	return p.Status()
+}
+
 // syncCursor keeps the cursor row's highlight in step with the pipeline under
 // it: its status, and whether it is picked for release (which a plain
 // background cannot show while the cursor sits on it).
@@ -445,7 +456,10 @@ func (m *uiModel) syncCursor() {
 	var want cursorTint
 	if cur := m.table.Cursor(); cur >= 0 && cur < len(m.visible) {
 		it := m.visible[cur]
-		want = cursorTint{failed: it.Status() == model.StatusFailed, selected: m.selected[it.PipelineName]}
+		// rowStatus, not it.Status(): a row whose status could not be
+		// fetched shows fetch-error, and the highlight has to say the same
+		// thing the cell does.
+		want = cursorTint{failed: alarming(rowStatus(it)), selected: m.selected[it.PipelineName]}
 	}
 	m.cursor = syncCursorTint(&m.table, want, m.cursor)
 }
@@ -624,15 +638,11 @@ func (m *uiModel) applyFilter() {
 		if it.Latest != nil && it.Latest.LastUpdate != nil {
 			last = it.Latest.LastUpdate.Local().Format("2006-01-02 15:04")
 		}
-		status := string(it.Status())
-		if it.FetchError != "" {
-			status = "fetch-error"
-		}
 		name := it.AccountName
 		if name == "" {
 			name = "-"
 		}
-		rows = append(rows, table.Row{name, it.AccountID, status, last})
+		rows = append(rows, table.Row{name, it.AccountID, string(rowStatus(it)), last})
 		visible = append(visible, it)
 	}
 	m.table.SetRows(rows)

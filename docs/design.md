@@ -361,16 +361,27 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   「エスケープ列を可視幅として数える」ヘルパーで切り詰めるため、行データに色を埋めると壊れる
   （`\x1b[31mFailed\x1b[…`）。そのため **描画済みの view に対して後段でスタイルを当てる**。
   対象は 2 つ:
-  - **STATUS 列（一覧 / Executions / Actions 共通）**: `Failed` の文字だけを赤にする
+  - **STATUS 列（一覧 / Executions / Actions 共通）**: `Failed` と `fetch-error` の文字だけを
+    赤にする。`fetch-error` は CodePipeline のステータスではなく「状態を取得できなかった行」の
+    表示名だが、CLI の table は以前から赤くしており、**取得できなかった行は失敗した行と同じだけ
+    注意に値する**。TUI だけ地味に出すのは 2 つのビューの言うことが食い違うだけ
   - **選択行（一覧のみ）**: 行全体を反転気味のハイライト地に。行の同定は **ACCOUNT ID セル**
     （行内で一意かつ切り詰められない唯一の列）で行う
+
+  **この方式は bubbles のレイアウト規約（各セルは左右 1 スペースでパディング・幅 0 の列は落ちる）に
+  依存する**。`cellStart` がそれを外側から再実装しており、規約が変わっても何も検知しない
+  ＝**別の列を静かに着色する**という壊れ方をする。`go.mod` の bubbles 固定はこのため。
+  上げるときは `TestCellStartRendersWhereBubblesPuts`（実際に描画した行からオフセットを
+  実測して `cellStart` と突き合わせる自己検証テスト）・`TestCellStartAndText`・
+  `TestSyncCursorTint` の失敗をまず疑う。
 
   行のベーススタイルと `Failed` の色は**別スパンとして描画**する（それぞれが自前で
   エスケープを開いて閉じるので、色のリセットがハイライトを行末まで落とさない）。
   既にスタイル済みの行（header・下罫線・**カーソル行**）は後段処理の対象外 —
   カーソル行は行全体が 1 つのスタイルで包まれており、内側の色のリセットが
   ハイライトを壊すため。カーソル行が伝えるべき状態は**ハイライト自体**に載せる
-  （`cursorTint`）: Failed なら赤地、選択済みなら下線（背景はカーソルが使っているため）
+  （`cursorTint`）: Failed / fetch-error なら赤地、選択済みなら下線（背景はカーソルが使っているため）。
+  セルの文字列とハイライトが食い違わないよう、どちらも `rowStatus` 1 つから導く
 - Executions 画面（実装済み）: `pipeline.Executions`（ListPipelineExecutions 1 ページ・新しい順）を
   テーブル表示（短縮 id / status / 開始 / 所要 / commit message）。選択実行の source revisions
   （source action 名 – 短縮 hash: commit message、AFT の 2 リポジトリ分）をテーブル下に

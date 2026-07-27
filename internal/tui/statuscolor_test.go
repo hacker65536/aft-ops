@@ -213,3 +213,64 @@ func TestSyncCursorTint(t *testing.T) {
 		t.Error("selection should not change the cursor background")
 	}
 }
+
+// cellStart reimplements bubbles' row layout from the outside. This measures
+// a row bubbles actually rendered and checks the two agree, so a bubbles
+// upgrade that shifts the padding fails here — loudly — instead of silently
+// coloring the wrong column.
+func TestCellStartRendersWhereBubblesPuts(t *testing.T) {
+	cols := execsColumns(80)
+	tb := newScreenTable(cols)
+	tb.SetHeight(3)
+	// A sentinel that cannot occur anywhere else in the row, so finding it
+	// finds the STATUS cell and nothing else.
+	const sentinel = "ZqZq"
+	tb.SetRows([]table.Row{{"aaaa1111", sentinel, "2026-07-25 10:00", "4m0s", "fix vpc"}})
+
+	var row string
+	for _, ln := range strings.Split(tb.View(), "\n") {
+		if strings.Contains(ln, sentinel) && !strings.Contains(ln, "\x1b") {
+			row = ln
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("no plain body row containing the sentinel:\n%s", tb.View())
+	}
+
+	actual := ansi.StringWidth(row[:strings.Index(row, sentinel)])
+	want, ok := cellStart(cols, execsStatusCol)
+	if !ok {
+		t.Fatal("cellStart says the STATUS column is not rendered, but it is")
+	}
+	if actual != want {
+		t.Errorf("cellStart = %d but bubbles put the cell at %d; the table's "+
+			"layout convention changed — see the note at the top of statuscolor.go",
+			want, actual)
+	}
+}
+
+// fetch-error is reddened like Failed. The CLI table has always done this;
+// the TUI showing the same row in the default color made the two views
+// disagree about which rows need attention.
+func TestStyleTableViewRedensFetchError(t *testing.T) {
+	markSpans(t)
+	cols := columns(80)
+	tb := newScreenTable(cols)
+	tb.SetHeight(5)
+	tb.SetRows([]table.Row{
+		{"alpha", "111111111111", "fetch-error", "-"},
+		{"bravo", "222222222222", "Succeeded", "2026-07-25 10:00"},
+	})
+
+	out := renderSelectableTable(tb, listStatusCol, listKeyCol, nil)
+	if !strings.Contains(out, "<fetch-error>") {
+		t.Errorf("a fetch-error cell should be styled:\n%s", out)
+	}
+	if strings.Contains(out, "<Succeeded>") {
+		t.Errorf("only the alarming word should be styled:\n%s", out)
+	}
+	if got := plain(out); got != tb.View() {
+		t.Errorf("styling changed the laid-out text:\n%q\nwant\n%q", got, tb.View())
+	}
+}
