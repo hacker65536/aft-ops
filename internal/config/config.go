@@ -160,7 +160,9 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("read config: %w", err)
 	}
 
-	applyEnv(&cfg)
+	if err := applyEnv(&cfg); err != nil {
+		return cfg, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
 	}
@@ -205,7 +207,13 @@ func (c *Config) EffectiveWriteProfile() string {
 	return c.Profile
 }
 
-func applyEnv(c *Config) {
+// applyEnv overlays the AFT_OPS_* environment on top of the file.
+//
+// A value that will not parse is an error, not something to step over. The
+// numeric keys used to assign only when err == nil, so AFT_OPS_RPS=x ran at
+// the configured rate and said nothing — the operator gets the behavior they
+// asked to change, with no sign their request was ever read.
+func applyEnv(c *Config) error {
 	if v := os.Getenv("AFT_OPS_PROFILE"); v != "" {
 		c.Profile = v
 	}
@@ -225,18 +233,32 @@ func applyEnv(c *Config) {
 		c.Cache.Dir = v
 	}
 	if v := os.Getenv("AFT_OPS_STATUS_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.Cache.StatusTTL = Duration(d)
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return envErr("AFT_OPS_STATUS_TTL", v, "a duration such as 10m or 0")
 		}
+		c.Cache.StatusTTL = Duration(d)
 	}
 	if v := os.Getenv("AFT_OPS_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			c.Batch.Concurrency = n
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return envErr("AFT_OPS_CONCURRENCY", v, "an integer")
 		}
+		c.Batch.Concurrency = n
 	}
 	if v := os.Getenv("AFT_OPS_RPS"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			c.Batch.RPS = f
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return envErr("AFT_OPS_RPS", v, "a number, 0 for unlimited")
 		}
+		c.Batch.RPS = f
 	}
+	return nil
+}
+
+// envErr names the variable, what was in it, and what was expected. The
+// wrapped parse error adds nothing an operator can act on ("invalid syntax"),
+// so it is dropped in favor of saying what a valid value looks like.
+func envErr(key, value, want string) error {
+	return fmt.Errorf("invalid %s=%q: want %s", key, value, want)
 }

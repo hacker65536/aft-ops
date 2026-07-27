@@ -204,3 +204,50 @@ func TestExpandHome(t *testing.T) {
 		}
 	}
 }
+
+// A malformed AFT_OPS_* value is an error, not something to step over. It
+// used to be assigned only when it parsed, so the run proceeded on the old
+// value and never said the request had been dropped.
+func TestEnvParseFailuresAreErrors(t *testing.T) {
+	cases := []struct{ key, value string }{
+		{"AFT_OPS_STATUS_TTL", "1z"},
+		{"AFT_OPS_CONCURRENCY", "abc"},
+		{"AFT_OPS_RPS", "x"},
+	}
+	for _, c := range cases {
+		t.Run(c.key, func(t *testing.T) {
+			t.Setenv(c.key, c.value)
+			// No config file: the env is the only thing under test.
+			_, err := Load("")
+			if err == nil {
+				t.Fatalf("%s=%s should be rejected", c.key, c.value)
+			}
+			// The message has to be actionable on its own: which variable,
+			// what was in it.
+			if !strings.Contains(err.Error(), c.key) || !strings.Contains(err.Error(), c.value) {
+				t.Errorf("error must name the key and the value: %v", err)
+			}
+		})
+	}
+}
+
+// Valid values still apply, so the check above is not passing by rejecting
+// everything.
+func TestEnvNumericValuesApply(t *testing.T) {
+	t.Setenv("AFT_OPS_STATUS_TTL", "0")
+	t.Setenv("AFT_OPS_CONCURRENCY", "3")
+	t.Setenv("AFT_OPS_RPS", "0")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cache.StatusTTL.D() != 0 {
+		t.Errorf("status_ttl = %v, want 0 (caching disabled)", cfg.Cache.StatusTTL.D())
+	}
+	if cfg.Batch.Concurrency != 3 {
+		t.Errorf("concurrency = %d", cfg.Batch.Concurrency)
+	}
+	if cfg.Batch.RPS != 0 {
+		t.Errorf("rps = %v, want 0 (unlimited)", cfg.Batch.RPS)
+	}
+}

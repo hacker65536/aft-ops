@@ -44,6 +44,10 @@ var goldenCases = []struct {
 	{"pipeline-list-fail-on-error", []string{"pipeline", "list", "--account", "payments", "--fail-on-error"}},
 	{"pipeline-list-bad-sort", []string{"pipeline", "list", "--sort", "bogus"}},
 	{"pipeline-list-bad-output", []string{"pipeline", "list", "-o", "yaml"}},
+	// Flags are merged after config.Load, so this only fails if the config
+	// is re-validated afterwards. It used to pass validation and get
+	// silently restored to the default of 10.
+	{"pipeline-list-bad-concurrency", []string{"pipeline", "list", "--concurrency", "0"}},
 	{"pipeline-show", []string{"pipeline", "show", "payments-stg"}},
 	{"pipeline-show-ambiguous", []string{"pipeline", "show", "payments"}},
 	{"pipeline-show-unknown", []string{"pipeline", "show", "no-such-account"}},

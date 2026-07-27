@@ -462,6 +462,12 @@ TUI の各操作は core 層サービス呼び出しであり、CLI と完全に
 
 優先順位: **flag > 環境変数 (`AFT_OPS_*`) > 設定ファイル > 既定値**
 
+- **環境変数のパース失敗は握りつぶさない**: `AFT_OPS_RPS=x` のような値はキー名・実際の値・
+  期待する形式を出して exit 2。以前は「パースできたときだけ代入」だったため、**指定した
+  つもりの設定が無言で無視される**（要件 §6「silent failure 禁止」に反する）
+- **検証は flag マージの後にもう一度走る**: flag は `config.Load` が返った後に載せるので、
+  1 回だけでは `--concurrency 0` のような値が検証を素通りして既定値に戻っていた
+
 ```yaml
 # ~/.config/aft-ops/config.yaml（--config で上書き可）
 profile: my-aft-management-profile   # AFT 管理アカウント用の AWS プロファイル

@@ -1,0 +1,5 @@
+$ aft-ops pipeline list --concurrency 0
+exit 2
+--- stdout ---
+--- stderr ---
+Error: batch.concurrency must be >= 1 (got 0)
