@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,9 +37,8 @@ func pipelineNames(items []model.PipelineSummary) []string {
 	return out
 }
 
-// An exact match on any of the three identities wins outright — a query that
-// exactly names one account must never also drag in its substring neighbours.
-func TestMatchSummariesExactWins(t *testing.T) {
+// A target resolves on any of the three identities, exactly.
+func TestResolveOneExactMatches(t *testing.T) {
 	items := fixture()
 	cases := []struct {
 		query string
@@ -51,46 +52,119 @@ func TestMatchSummariesExactWins(t *testing.T) {
 		{"333333333333-CUSTOMIZATIONS-PIPELINE", "bravo"}, // case-insensitive
 	}
 	for _, c := range cases {
-		got := matchSummaries(items, c.query)
-		if len(got) != 1 || got[0].AccountName != c.want {
-			t.Errorf("matchSummaries(%q) = %v, want exactly [%s]", c.query, pipelineNames(got), c.want)
+		got, err := resolveOne(items, c.query)
+		if err != nil {
+			t.Errorf("resolveOne(%q): %v", c.query, err)
+			continue
+		}
+		if got.AccountName != c.want {
+			t.Errorf("resolveOne(%q) = %s, want %s", c.query, got.AccountName, c.want)
 		}
 	}
 }
 
-// Substring matching covers both the account name and the account id, so a
-// target query selects the same rows as `list --account`.
-func TestMatchSummariesSubstring(t *testing.T) {
+// The point of the whole rule: a substring never resolves, however many
+// pipelines it happens to match. "alpha" matching one account today would
+// match two after the next one is vended, and a singular argument must not
+// change meaning underneath a runbook.
+func TestResolveOneRejectsSubstrings(t *testing.T) {
 	items := fixture()
-
-	got := matchSummaries(items, "alpha")
-	if len(got) != 2 {
-		t.Errorf("substring on name = %v, want both alpha rows", pipelineNames(got))
-	}
-
-	got = matchSummaries(items, "2222")
-	if len(got) != 1 || got[0].AccountID != "222222222222" {
-		t.Errorf("substring on account id = %v, want the 2222… row", pipelineNames(got))
-	}
-
-	if got := matchSummaries(items, "nothing-matches"); len(got) != 0 {
-		t.Errorf("unmatched query returned %v", pipelineNames(got))
-	}
-	if got := matchSummaries(items, "   "); len(got) != 0 {
-		t.Errorf("blank query returned %v", pipelineNames(got))
+	for _, q := range []string{"alpha", "alph", "2222", "brav"} {
+		if got, err := resolveOne(items, q); err == nil {
+			t.Errorf("resolveOne(%q) resolved to %s, want a refusal", q, got.AccountName)
+		}
 	}
 }
 
-// matchSummaries and filterSummaries must agree: the same query selects the
-// same rows whether it is a release target or a list filter.
-func TestMatchAndFilterAgreeOnSubstrings(t *testing.T) {
-	items := fixture()
-	for _, q := range []string{"alpha", "2222", "bravo"} {
-		matched := pipelineNames(matchSummaries(items, q))
-		filtered := pipelineNames(filterSummaries(items, nil, q))
-		if strings.Join(matched, ",") != strings.Join(filtered, ",") {
-			t.Errorf("query %q: match=%v filter=%v", q, matched, filtered)
+// A refusal has to be actionable: name the near misses, and say which flag
+// selects the group on purpose.
+func TestResolveOneNamesNearMisses(t *testing.T) {
+	_, err := resolveOne(fixture(), "alpha")
+	var te *targetError
+	if !errors.As(err, &te) {
+		t.Fatalf("want *targetError, got %T (%v)", err, err)
+	}
+	if te.ambiguous {
+		t.Error("a substring miss is not an ambiguity: nothing matched exactly")
+	}
+	if len(te.candidates) != 2 {
+		t.Fatalf("candidates = %v, want both alpha rows", pipelineNames(te.candidates))
+	}
+	msg := te.Error()
+	for _, want := range []string{"did you mean", "alpha-prod", "alpha-dev"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q should contain %q", msg, want)
 		}
+	}
+}
+
+// Two accounts can share a name; then the query really is undecidable and the
+// message says so rather than offering a "did you mean".
+func TestResolveOneAmbiguousExactMatch(t *testing.T) {
+	items := append(fixture(), sum("bravo", "444444444444", model.StatusSucceeded))
+	_, err := resolveOne(items, "bravo")
+	var te *targetError
+	if !errors.As(err, &te) {
+		t.Fatalf("want *targetError, got %T (%v)", err, err)
+	}
+	if !te.ambiguous || len(te.candidates) != 2 {
+		t.Fatalf("want an ambiguity over 2 rows, got ambiguous=%v %v",
+			te.ambiguous, pipelineNames(te.candidates))
+	}
+	if msg := te.Error(); !strings.Contains(msg, "matches 2 pipelines") {
+		t.Errorf("message %q should report the ambiguity", msg)
+	}
+}
+
+func TestResolveOneUnmatchedAndBlank(t *testing.T) {
+	for _, q := range []string{"nothing-matches", "   ", ""} {
+		_, err := resolveOne(fixture(), q)
+		var te *targetError
+		if !errors.As(err, &te) {
+			t.Fatalf("resolveOne(%q): want *targetError, got %v", q, err)
+		}
+		if len(te.candidates) != 0 {
+			t.Errorf("resolveOne(%q) offered candidates %v", q, pipelineNames(te.candidates))
+		}
+		if msg := te.Error(); !strings.Contains(msg, "no pipeline matches") {
+			t.Errorf("resolveOne(%q) message = %q", q, msg)
+		}
+	}
+}
+
+// The hint tells the operator that --account selects the whole group, so the
+// near misses it counts must be exactly the rows --account would select.
+func TestNearMissesMatchTheAccountFilter(t *testing.T) {
+	items := fixture()
+	for _, q := range []string{"alpha", "2222", "brav"} {
+		_, err := resolveOne(items, q)
+		var te *targetError
+		if !errors.As(err, &te) {
+			t.Fatalf("resolveOne(%q): want *targetError, got %v", q, err)
+		}
+		near := strings.Join(pipelineNames(te.candidates), ",")
+		filtered := strings.Join(pipelineNames(filterSummaries(items, nil, q)), ",")
+		if near != filtered {
+			t.Errorf("query %q: candidates=%v, --account selects=%v", q, near, filtered)
+		}
+	}
+}
+
+// A short query can match most of a large fleet; the message stays readable.
+func TestTargetErrorCapsCandidates(t *testing.T) {
+	var items []model.PipelineSummary
+	for i := range maxCandidates + 5 {
+		items = append(items, sum(fmt.Sprintf("team-%02d", i),
+			fmt.Sprintf("%012d", i), model.StatusSucceeded))
+	}
+	_, err := resolveOne(items, "team")
+	msg := err.Error()
+	if lines := strings.Count(msg, "\n  "); lines != maxCandidates+1 {
+		t.Errorf("message lists %d indented lines, want %d candidates plus the elision:\n%s",
+			lines, maxCandidates+1, msg)
+	}
+	if !strings.Contains(msg, "and 5 more") {
+		t.Errorf("message should say how many were elided:\n%s", msg)
 	}
 }
 
@@ -114,9 +188,11 @@ func TestSelectTargetsDedupes(t *testing.T) {
 	items := fixture()
 	// The same pipeline reached three ways plus a status sweep that includes
 	// it again must yield one entry.
-	got, err := selectTargets(items,
-		[]string{"alpha-dev", "222222222222", "222222222222-customizations-pipeline"},
-		"", []string{"Failed"})
+	got, err := selectTargets(items, targetQuery{
+		args: []string{"alpha-dev", "222222222222",
+			"222222222222-customizations-pipeline"},
+		statuses: []string{"Failed"},
+	})
 	if err != nil {
 		t.Fatalf("selectTargets: %v", err)
 	}
@@ -128,10 +204,76 @@ func TestSelectTargetsDedupes(t *testing.T) {
 // An unmatched query is an error rather than a silent skip: releasing fewer
 // pipelines than asked for is worse than refusing.
 func TestSelectTargetsUnknownIsAnError(t *testing.T) {
-	if _, err := selectTargets(fixture(), []string{"alpha-dev", "ghost"}, "", nil); err == nil {
+	_, err := selectTargets(fixture(), targetQuery{args: []string{"alpha-dev", "ghost"}})
+	if err == nil {
 		t.Fatal("an unmatched target should be an error")
-	} else if !strings.Contains(err.Error(), "ghost") {
+	}
+	if !strings.Contains(err.Error(), "ghost") {
 		t.Errorf("error should name the offending query, got %v", err)
+	}
+}
+
+// A substring given as an argument is refused, and the refusal names the flag
+// that would have selected the group deliberately.
+func TestSelectTargetsSubstringSuggestsTheAccountFlag(t *testing.T) {
+	_, err := selectTargets(fixture(), targetQuery{args: []string{"alpha"}, verb: "release"})
+	if err == nil {
+		t.Fatal("a substring argument should not resolve to two pipelines")
+	}
+	if want := "to release all 2, pass --account alpha"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q should contain %q", err, want)
+	}
+}
+
+// --account is the set-shaped form: it selects the group the bare argument
+// was refused for.
+func TestSelectTargetsAccountSelectsTheGroup(t *testing.T) {
+	got, err := selectTargets(fixture(), targetQuery{account: "alpha"})
+	if err != nil {
+		t.Fatalf("selectTargets: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("targets = %v, want both alpha rows", pipelineNames(got))
+	}
+}
+
+// --account and --status intersect, matching `pipeline list`; named targets
+// union in on top of that.
+func TestSelectTargetsAccountAndStatusIntersect(t *testing.T) {
+	items := fixture()
+	got, err := selectTargets(items, targetQuery{account: "alpha", statuses: []string{"Failed"}})
+	if err != nil {
+		t.Fatalf("selectTargets: %v", err)
+	}
+	if len(got) != 1 || got[0].AccountName != "alpha-dev" {
+		t.Fatalf("targets = %v, want only the failed alpha row", pipelineNames(got))
+	}
+
+	got, err = selectTargets(items, targetQuery{
+		args: []string{"bravo"}, account: "alpha", statuses: []string{"Failed"}})
+	if err != nil {
+		t.Fatalf("selectTargets: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("targets = %v, want the named row plus the filtered one", pipelineNames(got))
+	}
+}
+
+// An unselective query is a caller bug, not an empty result: every command
+// checks it before touching AWS.
+func TestTargetQueryEmpty(t *testing.T) {
+	if !(targetQuery{}).empty() {
+		t.Error("a query with no selector should be empty")
+	}
+	for _, q := range []targetQuery{
+		{args: []string{"alpha-dev"}},
+		{file: "targets.txt"},
+		{account: "alpha"},
+		{statuses: []string{"Failed"}},
+	} {
+		if q.empty() {
+			t.Errorf("%+v should not be empty", q)
+		}
 	}
 }
 
@@ -141,12 +283,24 @@ func TestSelectTargetsFromFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := selectTargets(fixture(), nil, path, nil)
+	got, err := selectTargets(fixture(), targetQuery{file: path})
 	if err != nil {
 		t.Fatalf("selectTargets: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("targets = %v, want alpha-dev and bravo (comments/blanks dropped)", pipelineNames(got))
+	}
+}
+
+// A file is an explicit list, so its lines resolve by the same exact rule as
+// arguments — one line must not expand into three pipelines.
+func TestSelectTargetsFileLinesResolveExactly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "targets.txt")
+	if err := os.WriteFile(path, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := selectTargets(fixture(), targetQuery{file: path}); err == nil {
+		t.Fatal("a substring line should be refused just like an argument")
 	}
 }
 

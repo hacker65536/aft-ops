@@ -116,16 +116,23 @@ action, status, duration and CodeBuild id), which is where the ids for
 // ---- pipeline refresh ----
 
 func newPipelineRefreshCmd(app *App) *cobra.Command {
+	var accountQuery string
 	cmd := &cobra.Command{
-		Use:   "refresh <target...>",
+		Use:   "refresh [target...]",
 		Short: "Refetch the status of specific pipelines into the cache",
 		Long: `Refetch just the given pipelines' latest execution status and update the
 status cache, without fanning out over every pipeline.
 
-Each target may be a pipeline name, an account id, or an account name.`,
-		Args: cobra.MinimumNArgs(1),
+Each target names one pipeline exactly, by pipeline name, account id, or
+account name. To refresh a group, select it with --account.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			q := targetQuery{args: args, account: accountQuery, verb: "refresh"}
+			if q.empty() {
+				return &ExitError{Code: ExitToolError,
+					Message: "no targets: give arguments or --account"}
+			}
 			svc, err := app.PipelineService(ctx)
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
@@ -139,7 +146,7 @@ Each target may be a pipeline name, an account id, or an account name.`,
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
 
-			targets, err := selectTargets(summariesFromNames(names, resolver), args, "", nil)
+			targets, err := selectTargets(summariesFromNames(names, resolver), q)
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
@@ -173,6 +180,8 @@ Each target may be a pipeline name, an account id, or an account name.`,
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&accountQuery, "account", "a", "",
+		"refresh every pipeline whose account name or id contains this substring")
 	return cmd
 }
 
@@ -339,8 +348,8 @@ resolve to exactly one pipeline.`,
 
 // resolveTarget maps a single target string to exactly one pipeline name,
 // using the (cache-aware) inventory and account resolver only — it does not
-// fetch statuses. Ambiguous matches are an error so single-target commands
-// never act on the wrong pipeline.
+// fetch statuses. Resolution is exact (see resolveOne), so a single-target
+// command can never act on a pipeline the operator did not name.
 func resolveTarget(ctx context.Context, app *App, target string) (string, *account.Resolver, error) {
 	svc, err := app.PipelineService(ctx)
 	if err != nil {
@@ -358,24 +367,11 @@ func resolveTarget(ctx context.Context, app *App, target string) (string, *accou
 		return "", nil, err
 	}
 
-	matched := matchSummaries(summariesFromNames(names, resolver), target)
-	switch len(matched) {
-	case 0:
-		return "", nil, fmt.Errorf("no pipeline matches %q", target)
-	case 1:
-		return matched[0].PipelineName, resolver, nil
-	default:
-		var b strings.Builder
-		fmt.Fprintf(&b, "%q matches %d pipelines; be more specific:", target, len(matched))
-		for _, m := range matched {
-			name := m.AccountName
-			if name == "" {
-				name = "-"
-			}
-			fmt.Fprintf(&b, "\n  %s  %s (%s)", m.PipelineName, name, m.AccountID)
-		}
-		return "", nil, fmt.Errorf("%s", b.String())
+	matched, err := resolveOne(summariesFromNames(names, resolver), target)
+	if err != nil {
+		return "", nil, err
 	}
+	return matched.PipelineName, resolver, nil
 }
 
 // summariesFromNames builds status-free summaries (name + resolved account)
@@ -713,10 +709,12 @@ func filterSummaries(items []model.PipelineSummary, statuses []string, accountQu
 func newPipelineReleaseCmd(app *App) *cobra.Command {
 	var (
 		statusFilter      []string
+		accountQuery      string
 		fromFile          string
 		dryRun            bool
 		yes               bool
 		maxTargets        int
+		expect            int
 		includeInProgress bool
 	)
 	cmd := &cobra.Command{
@@ -724,15 +722,16 @@ func newPipelineReleaseCmd(app *App) *cobra.Command {
 		Short: "Trigger Release change (StartPipelineExecution) on selected pipelines",
 		Long: `Trigger Release change on selected pipelines.
 
-Targets may be pipeline names, account ids, or account names, given as
-arguments, via --file (one per line, "-" for stdin), or selected by
---status (e.g. --status Failed for a retry sweep).`,
+Each target names one pipeline exactly, by pipeline name, account id, or
+account name, given as arguments or via --file (one per line, "-" for
+stdin). Releasing a group is asked for explicitly: --account selects every
+pipeline whose account matches a substring, and --status selects by current
+state (e.g. --status Failed for a retry sweep).
+
+--expect N fails the run unless the selection resolves to exactly N
+pipelines, so an unattended --yes cannot quietly widen as the fleet grows.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if len(args) == 0 && fromFile == "" && len(statusFilter) == 0 {
-				return &ExitError{Code: ExitToolError,
-					Message: "no targets: give arguments, --file, or --status"}
-			}
 			// Before releaseTargets: a --status selection makes that call
 			// refetch every pipeline's status, so a typo caught afterwards
 			// would have cost a full fan-out to reach "no matching targets".
@@ -740,10 +739,25 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
+			q := targetQuery{
+				args: args, file: fromFile, account: accountQuery,
+				statuses: statuses, verb: "release",
+			}
+			if q.empty() {
+				return &ExitError{Code: ExitToolError,
+					Message: "no targets: give arguments, --account, --file, or --status"}
+			}
 
-			targets, err := releaseTargets(ctx, app, args, fromFile, statuses)
+			targets, err := releaseTargets(ctx, app, q)
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			// Before the empty check: "--expect 3 selected nothing" is a
+			// failed assertion, not a quiet success.
+			if cmd.Flags().Changed("expect") && len(targets) != expect {
+				return &ExitError{Code: ExitToolError, Message: fmt.Sprintf(
+					"--expect %d, but the selection resolved to %d pipeline(s)",
+					expect, len(targets))}
 			}
 			if len(targets) == 0 {
 				fmt.Fprintln(os.Stderr, "no matching targets")
@@ -829,8 +843,12 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 	}
 	cmd.Flags().StringSliceVarP(&statusFilter, "status", "s", nil,
 		"select targets by current status, comma-separated:\n"+statusFlagValues())
+	cmd.Flags().StringVarP(&accountQuery, "account", "a", "",
+		"release every pipeline whose account name or id contains this substring")
 	cmd.Flags().StringVarP(&fromFile, "file", "f", "",
 		"read targets from file, one per line (\"-\" for stdin)")
+	cmd.Flags().IntVar(&expect, "expect", 0,
+		"fail unless the selection resolves to exactly N pipelines")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show targets without releasing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().IntVar(&maxTargets, "max-targets", 0,
@@ -848,14 +866,13 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 //
 //   - --status selects the target set itself → refetch the whole inventory
 //     (a pipeline that has since succeeded must not be re-released).
-//   - explicit targets → refetch only those (cheap, and enough for the
-//     in-progress guard).
+//   - named targets and --account select by name, not by state, so only the
+//     selected rows are refetched (cheap, and enough for the in-progress
+//     guard).
 func releaseTargets(
 	ctx context.Context,
 	app *App,
-	args []string,
-	fromFile string,
-	statuses []string,
+	q targetQuery,
 ) ([]model.PipelineSummary, error) {
 	svc, err := app.PipelineService(ctx)
 	if err != nil {
@@ -874,7 +891,7 @@ func releaseTargets(
 	}
 
 	base := summariesFromNames(names, resolver)
-	if len(statuses) > 0 {
+	if len(q.statuses) > 0 {
 		fmt.Fprintln(os.Stderr, "refetching statuses so --status selects on current state…")
 		var stats model.StatusStats
 		base, stats = svc.Statuses(ctx, names, resolver,
@@ -886,8 +903,8 @@ func releaseTargets(
 		output.StatusFreshness(os.Stderr, stats)
 	}
 
-	targets, err := selectTargets(base, args, fromFile, statuses)
-	if err != nil || len(targets) == 0 || len(statuses) > 0 {
+	targets, err := selectTargets(base, q)
+	if err != nil || len(targets) == 0 || len(q.statuses) > 0 {
 		return targets, err
 	}
 
@@ -906,16 +923,34 @@ func releaseTargets(
 	return fresh, nil
 }
 
-// selectTargets resolves args/file/status filters into a deduped target list.
-func selectTargets(
-	summaries []model.PipelineSummary,
-	args []string,
-	fromFile string,
-	statuses []string,
-) ([]model.PipelineSummary, error) {
-	queries := append([]string(nil), args...)
-	if fromFile != "" {
-		lines, err := readLines(fromFile)
+// targetQuery is a command's complete description of what to act on: targets
+// named one by one (arguments, or a file of them), plus the set-shaped
+// selectors. verb only ever appears in an error hint.
+type targetQuery struct {
+	args     []string
+	file     string
+	account  string
+	statuses []string
+	verb     string
+}
+
+func (q targetQuery) empty() bool {
+	return len(q.args) == 0 && q.file == "" && q.account == "" && len(q.statuses) == 0
+}
+
+// selectTargets resolves a targetQuery into a deduped target list.
+//
+// The two halves have deliberately different failure modes. A named target
+// must resolve to exactly one pipeline, and anything else is an error: the
+// operator said "this one" and was wrong about it. --account and --status
+// are sets by construction, so selecting nothing is a legitimate answer and
+// the caller reports it as "no matching targets". Where they overlap the two
+// selectors intersect, matching `pipeline list`; named targets union in on
+// top.
+func selectTargets(summaries []model.PipelineSummary, q targetQuery) ([]model.PipelineSummary, error) {
+	queries := append([]string(nil), q.args...)
+	if q.file != "" {
+		lines, err := readLines(q.file)
 		if err != nil {
 			return nil, err
 		}
@@ -931,34 +966,88 @@ func selectTargets(
 		}
 	}
 
-	for _, q := range queries {
-		matched := matchSummaries(summaries, q)
-		if len(matched) == 0 {
-			return nil, fmt.Errorf("no pipeline matches %q", q)
+	for _, name := range queries {
+		m, err := resolveOne(summaries, name)
+		if err != nil {
+			var te *targetError
+			if q.verb != "" && errors.As(err, &te) && len(te.candidates) > 0 {
+				te.hint = fmt.Sprintf("to %s all %d, pass --account %s",
+					q.verb, len(te.candidates), te.query)
+			}
+			return nil, err
 		}
-		for _, m := range matched {
-			add(m)
-		}
+		add(m)
 	}
-	if len(statuses) > 0 {
-		for _, s := range filterSummaries(summaries, statuses, "") {
+	if q.account != "" || len(q.statuses) > 0 {
+		for _, s := range filterSummaries(summaries, q.statuses, q.account) {
 			add(s)
 		}
 	}
 	return targets, nil
 }
 
-// matchSummaries resolves one query against the pipeline list. Exact matches
-// (pipeline name, account id, account name — all case-insensitive) win
-// outright; only when there are none does it fall back to substring matches
-// on the account name or id. The substring rule mirrors `list --account`, so
-// the same query selects the same rows in both places.
-func matchSummaries(summaries []model.PipelineSummary, query string) []model.PipelineSummary {
+// maxCandidates caps the list of near misses in an error. A short query can
+// match most of a several-hundred-account fleet, and a wall of names is not
+// a suggestion.
+const maxCandidates = 10
+
+// targetError reports an argument that did not name exactly one pipeline. It
+// carries the near misses because that is what the operator's next move
+// depends on: a typo needs to see the real names, and someone who meant a
+// whole group needs to be told which flag asks for a group on purpose.
+type targetError struct {
+	query      string
+	candidates []model.PipelineSummary
+	ambiguous  bool   // the candidates all matched exactly — genuinely undecidable
+	hint       string // set by commands that have a set-shaped flag to offer
+}
+
+func (e *targetError) Error() string {
+	var b strings.Builder
+	switch {
+	case len(e.candidates) == 0:
+		return fmt.Sprintf("no pipeline matches %q", e.query)
+	case e.ambiguous:
+		fmt.Fprintf(&b, "%q matches %d pipelines; name one of them:", e.query, len(e.candidates))
+	default:
+		fmt.Fprintf(&b, "no pipeline is named %q; did you mean:", e.query)
+	}
+	shown := e.candidates
+	if len(shown) > maxCandidates {
+		shown = shown[:maxCandidates]
+	}
+	for _, c := range shown {
+		name := c.AccountName
+		if name == "" {
+			name = "-"
+		}
+		fmt.Fprintf(&b, "\n  %s  %s (%s)", c.PipelineName, name, c.AccountID)
+	}
+	if n := len(e.candidates) - len(shown); n > 0 {
+		fmt.Fprintf(&b, "\n  … and %d more", n)
+	}
+	if e.hint != "" {
+		fmt.Fprintf(&b, "\n%s", e.hint)
+	}
+	return b.String()
+}
+
+// resolveOne maps one target argument to exactly one pipeline: a pipeline
+// name, an account id, or an account name, matched exactly and
+// case-insensitively.
+//
+// Substrings deliberately do not resolve. A fragment that identifies one
+// pipeline today identifies three after the next account is vended, so a
+// singular argument is never allowed to quietly become a set — and a command
+// line kept in a runbook or a CI job then no longer says how many pipelines
+// it acts on. Selecting a group is what --account is for. Near misses are
+// still collected, but only to name them in the error.
+func resolveOne(summaries []model.PipelineSummary, query string) (model.PipelineSummary, error) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
-		return nil
+		return model.PipelineSummary{}, &targetError{query: query}
 	}
-	var exact, partial []model.PipelineSummary
+	var exact, near []model.PipelineSummary
 	for _, s := range summaries {
 		switch {
 		case strings.ToLower(s.PipelineName) == q,
@@ -967,13 +1056,18 @@ func matchSummaries(summaries []model.PipelineSummary, query string) []model.Pip
 			exact = append(exact, s)
 		case strings.Contains(strings.ToLower(s.AccountName), q),
 			strings.Contains(s.AccountID, q):
-			partial = append(partial, s)
+			near = append(near, s)
 		}
 	}
-	if len(exact) > 0 {
-		return exact
+	switch {
+	case len(exact) == 1:
+		return exact[0], nil
+	case len(exact) > 1:
+		return model.PipelineSummary{}, &targetError{
+			query: query, candidates: exact, ambiguous: true}
+	default:
+		return model.PipelineSummary{}, &targetError{query: query, candidates: near}
 	}
-	return partial
 }
 
 func readLines(path string) ([]string, error) {

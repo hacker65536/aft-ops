@@ -80,6 +80,9 @@ go build -o aft-ops ./cmd/aft-ops
 ./aft-ops pipeline release --status Failed --dry-run
 ./aft-ops pipeline release --status Failed
 
+# release a group on purpose, and refuse to run if it is not the size you expect
+./aft-ops pipeline release --account payments --expect 3 --yes
+
 # analyze API call rates / throttling from recorded metrics
 ./aft-ops metrics show
 ```
@@ -151,10 +154,32 @@ tui:
   poll_interval: 30s     # auto-refresh of running pipelines (also --watch's default)
 ```
 
+### Choosing what to act on
+
+A target names one pipeline exactly — by pipeline name, account id, or account
+name. Substrings do not resolve: `payments` is refused (with the three real
+names listed) rather than quietly standing for `payments-prod`, `payments-stg`
+and `payments-dev`. A fragment that identifies one pipeline today identifies
+three after the next account is vended, and a command line kept in a runbook
+or a CI job should say how many pipelines it acts on.
+
+Acting on a group is asked for explicitly:
+
+```bash
+./aft-ops pipeline release --account payments   # every account matching the substring
+./aft-ops pipeline release --status Failed      # every pipeline in that state
+./aft-ops pipeline release --file targets.txt   # an explicit list, one exact name per line
+```
+
+`--account` and `--status` intersect, as they do in `pipeline list`; targets
+named individually are added on top. For unattended runs, `--expect N` fails
+unless the selection resolves to exactly N pipelines — `max_targets` caps the
+blast radius, `--expect` pins it to what the automation was written for.
+
 Release operations never trust the status cache: `--status` refetches the
-whole inventory before deciding what to release, and explicitly named targets
-are refetched individually, so neither the selection nor the in-progress skip
-is made on minutes-old data.
+whole inventory before deciding what to release, and named targets and
+`--account` groups are refetched individually, so neither the selection nor
+the in-progress skip is made on minutes-old data.
 
 ## License
 

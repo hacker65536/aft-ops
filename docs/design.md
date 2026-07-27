@@ -167,7 +167,8 @@ terraform ログ抽出（`core/logs`）:
 ### 4.3 Release change（F3 + F5）
 
 ```
-対象決定（名前/アカウント指定・--status Failed・--file/stdin）
+対象決定（名前・--account・--status Failed・--file/stdin）
+→ --expect による件数アサーション（指定時）
 → 対象の status を再取得（下記）
 → dry-run 表示（対象一覧 + 件数）
 → 確認プロンプト（--yes でスキップ、件数 > limit なら拒否）
@@ -175,6 +176,14 @@ terraform ログ抽出（`core/logs`）:
 → 結果レポート（成功/失敗/skip 件数、失敗理由）
 ```
 
+- **対象の広がりは構文に出す**（§8.1 の解決規約）。引数・`--file` の各行は 1 本を完全一致で
+  指すのみで、部分一致は解決しない。グループを撃つには `--account` を明示する。
+  確認プロンプトは対象一覧を出しているが、`--yes` では消えるうえ習慣化もするので、
+  「人が見ている」ことを前提にしない防御をコマンドラインの形として持たせる
+- `--expect N`: 対象が N 件に解決しなければ exit 2。`max_targets` が「上限」であるのに対し
+  こちらは「この件数のはず」という宣言で、無人の `--yes` 実行がアカウント増加に伴って
+  黙って広がるのを止める。アサーションの対象は**選択された集合**であり、
+  InProgress スキップ後に実際に起動した本数ではない
 - 既定の安全ガード: `max_release_targets: 50`（設定で変更可）。超過時は `--force-limit` 相当の明示が必要
 - 冪等性: 実行中 (InProgress) のパイプラインは既定でスキップ（`--include-in-progress` で上書き）
 - **release は status キャッシュに依存しない**: status は「`--status` がどれを選ぶか」と
@@ -270,7 +279,8 @@ aft-ops pipeline list            # F1: 状態一覧（alias: pl ls）。status �
     --order asc|desc             # 既定 desc（未実行=時間なしは常に末尾）
     --refresh                    # 全 status を強制再取得（inventory/accounts も）
     --watch [--interval 30s]     # 定期再取得（既定間隔は tui.poll_interval）。table 出力専用
-aft-ops pipeline refresh <target...>  # 指定パイプラインの status だけ再取得しキャッシュ更新
+aft-ops pipeline refresh [target...]  # 指定パイプラインの status だけ再取得しキャッシュ更新
+    --account <name|id|部分一致>  # グループ指定
 aft-ops pipeline show <target>   # F2: 詳細（ステージ/実行履歴）
 aft-ops pipeline executions <target>  # F2: 実行履歴一覧（alias: execs）
     [--limit 25] [--actions]     # --actions は各実行のアクション（CodeBuild id 付き）も展開
@@ -281,8 +291,10 @@ aft-ops pipeline logs <target>   # F2: CodeBuild/terraform ログ
     #   `──── <stage> / <action> ────` で区切る。単一 build のときは区切り無し
     # --build = 指定 1 本のみ
 aft-ops pipeline release [targets...]   # F3: Release change
+    --account <name|id|部分一致>  # グループ指定（複数対象を明示的に要求する唯一の位置指定手段）
     --status Failed              # フィルタ結果を対象に（対象決定時に status を強制再取得）
     --file targets.txt | -       # 明示リスト（stdin 可）
+    --expect N                   # 対象が N 件でなければ exit 2
     --dry-run / --yes
     --concurrency N --chunk-size N --chunk-pause 30s
 
@@ -292,7 +304,20 @@ aft-ops metrics show [--last N]
 aft-ops version / completion
 ```
 
-- `<target>` はパイプライン名・アカウント ID・アカウント名のいずれでも解決（F7）
+- **`<target>` の解決規約**: パイプライン名・アカウント ID・アカウント名のいずれかに
+  **完全一致**（大小文字不問・前後空白は除去）した 1 本のみ（F7）。部分一致は解決しない。
+  - 理由は 2 つ。(a) 今日 1 本を指す断片は次のアカウントが払い出された瞬間に 3 本を指す。
+    単数形の引数が黙って集合に化けると、runbook や CI に残ったコマンド行から
+    blast radius が読めなくなる。(b) `show` は曖昧一致を拒否するのに `release` は
+    全マッチを黙って採用する、という**読み取り系と書き込み系の非対称**があった。
+    引数の意味はサブコマンドをまたいで同一であるべき
+  - 集合の選択は常にフラグ側（`--account` / `--status`）。両者は積で交わり（`list` と同じ）、
+    名前指定した対象はその上に和で乗る
+  - 解決に失敗したときは近傍候補（`--account` が選ぶ集合と同一）を最大 10 件列挙し、
+    書き込み系ではグループ指定の方法（`--account <query>`）も示す。
+    完全一致が複数ある場合（アカウント名の重複）だけは「曖昧」として別の文言を出す
+- `pipeline refresh` / `pipeline release` は引数を取らず `--account` だけでも起動できる。
+  名前指定なし・フラグなしの起動は exit 2（無選択は空結果ではなく呼び出し側の誤り）
 - `--status` は列挙値を検証し、未知の値は exit 2 で拒否する（大文字小文字は不問）。
   受け付ける値は CodePipeline の各ステータスに加えて、取得できなかった行の表示名である
   `fetch-error`、および実行履歴なしを選ぶ `Unknown`。

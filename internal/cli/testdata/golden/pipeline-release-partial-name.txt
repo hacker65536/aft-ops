@@ -1,9 +1,10 @@
-$ aft-ops pipeline show payments
+$ aft-ops pipeline release payments --dry-run
 exit 2
 --- stdout ---
 --- stderr ---
 aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
-Error: "payments" matches 3 pipelines; be more specific:
+Error: no pipeline is named "payments"; did you mean:
   100000000004-customizations-pipeline  payments-prod (100000000004)
   100000000005-customizations-pipeline  payments-stg (100000000005)
   100000000006-customizations-pipeline  payments-dev (100000000006)
+to release all 3, pass --account payments

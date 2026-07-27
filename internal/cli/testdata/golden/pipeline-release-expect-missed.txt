@@ -1,0 +1,6 @@
+$ aft-ops pipeline release --account payments --expect 1 --dry-run
+exit 2
+--- stdout ---
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+Error: --expect 1, but the selection resolved to 3 pipeline(s)

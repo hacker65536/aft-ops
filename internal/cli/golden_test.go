@@ -49,7 +49,9 @@ var goldenCases = []struct {
 	// silently restored to the default of 10.
 	{"pipeline-list-bad-concurrency", []string{"pipeline", "list", "--concurrency", "0"}},
 	{"pipeline-show", []string{"pipeline", "show", "payments-stg"}},
-	{"pipeline-show-ambiguous", []string{"pipeline", "show", "payments"}},
+	// A substring names no pipeline; the error has to make the real names
+	// and the group flag visible.
+	{"pipeline-show-partial-name", []string{"pipeline", "show", "payments"}},
 	{"pipeline-show-unknown", []string{"pipeline", "show", "no-such-account"}},
 	{"pipeline-executions", []string{"pipeline", "executions", "payments-stg", "--limit", "3", "--actions"}},
 	{"pipeline-logs", []string{"pipeline", "logs", "payments-stg"}},
@@ -57,6 +59,15 @@ var goldenCases = []struct {
 	{"pipeline-release-status-typo", []string{"pipeline", "release", "--status", "Faild", "--dry-run"}},
 	{"pipeline-release-no-targets", []string{"pipeline", "release"}},
 	{"pipeline-release-unknown-target", []string{"pipeline", "release", "ghost", "--dry-run"}},
+	// The core of the target contract: a bare substring must not fan a
+	// release out over three accounts, and --account is how you ask for
+	// all three on purpose.
+	{"pipeline-release-partial-name", []string{"pipeline", "release", "payments", "--dry-run"}},
+	{"pipeline-release-account", []string{"pipeline", "release", "--account", "payments", "--dry-run"}},
+	// --expect is what an unattended --yes leans on: the selection widening
+	// from 1 to 3 has to stop the run.
+	{"pipeline-release-expect-met", []string{"pipeline", "release", "--account", "payments", "--expect", "3", "--dry-run"}},
+	{"pipeline-release-expect-missed", []string{"pipeline", "release", "--account", "payments", "--expect", "1", "--dry-run"}},
 	{"account-list", []string{"account", "list"}},
 }
 

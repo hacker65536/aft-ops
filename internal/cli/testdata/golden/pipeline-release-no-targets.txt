@@ -2,4 +2,4 @@ $ aft-ops pipeline release
 exit 2
 --- stdout ---
 --- stderr ---
-Error: no targets: give arguments, --file, or --status
+Error: no targets: give arguments, --account, --file, or --status
