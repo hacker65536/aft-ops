@@ -448,6 +448,7 @@ TUI の各操作は core 層サービス呼び出しであり、CLI と完全に
 # ~/.config/aft-ops/config.yaml（--config で上書き可）
 profile: my-aft-management-profile   # AFT 管理アカウント用の AWS プロファイル
 region: ap-northeast-1
+aws_config_file: ~/.aws/my-sso-config  # profile を引く shared config file（後述）
 account_source: aft-dynamodb
 
 batch:
@@ -477,10 +478,26 @@ metrics:
 
 - プロファイルは AWS SDK 標準のクレデンシャルチェーンに委譲（ツールは認証情報を保持しない）
 - 読み取り/書き込みでプロファイルを分けたい場合に備え `write_profile`（任意、未指定なら `profile` を使用）を用意
+- **`aws_config_file`（任意、env `AFT_OPS_AWS_CONFIG_FILE` / flag `--aws-config-file`）**:
+  profile を引く shared config file を固定する。組織ごとに config file を分けて
+  `AWS_CONFIG_FILE` で切り替える運用では、設定ファイル側の `profile` は固定なのに
+  シェル側のファイルだけが変わり、**設定した profile を定義していないファイルを引く**
+  という組み合わせが起きる。profile とそれを定義するファイルを一組で持たせるための設定。
+  - 未設定なら SDK の解決に委ねる（`AWS_CONFIG_FILE` があればそれ、無ければ `~/.aws/config`）。
+    既定を我々が埋めてしまうと素の `AWS_CONFIG_FILE` が黙って効かなくなるため、**空のまま**にする
+  - 設定した場合は `AWS_CONFIG_FILE` より**強い**（`WithSharedConfigFiles`）
+  - **存在チェックは config の検証で行う**。SDK に渡すと「プロファイルが見つからない」
+    という症状違いのエラーになり、診断が的外れな方向へ行くため
+  - credentials file は対象外（SSO 中心の運用では出番がない）
+  - **cache scope は profile+region のまま**変えない。異なる config file の同名 profile が
+    別アカウントを指した場合は、後述の identity ガードが検出して当該 scope を破棄する
 - **接続先の明示（取り違え防止）**: AWS に触れるコマンドは `aws: account <id> · region <r> ·
   profile <p>` を stderr に 1 行出す。profile 未設定時は「環境のクレデンシャルチェーンを
   使っている」旨を併記する（cache scope は profile+region 由来なので、profile 無指定だと
-  日によって別アカウントを指しうる）。identity は cache scope に記録し、**記録と異なる
+  日によって別アカウントを指しうる）。SDK 既定以外の config file を使っているときは
+  `· config <path>` を併記する（`aws_config_file` 指定時と、素の `AWS_CONFIG_FILE` が
+  効いているときの両方。後者こそが「意図と違うファイルで profile が解決された」という
+  失敗の現場なので、自分の設定だけを出しても意味がない）。identity は cache scope に記録し、**記録と異なる
   identity を検出したら警告して当該 scope を破棄する**（別アカウントのデータを供給しない）。
   検証コスト（クレデンシャル解決 + STS で約 0.6s）とキャッシュヒット時の応答（0.02s）の
   釣り合いから、実際に `sts:GetCallerIdentity` を呼ぶのは次の場合:

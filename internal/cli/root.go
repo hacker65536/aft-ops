@@ -23,13 +23,14 @@ func Execute(ctx context.Context) error {
 	defer app.closeMetrics()
 
 	var (
-		cfgPath     string
-		profile     string
-		region      string
-		outFormat   string
-		demoPath    string
-		concurrency int
-		rps         float64
+		cfgPath       string
+		profile       string
+		region        string
+		awsConfigFile string
+		outFormat     string
+		demoPath      string
+		concurrency   int
+		rps           float64
 	)
 
 	root := &cobra.Command{
@@ -50,6 +51,9 @@ func Execute(ctx context.Context) error {
 			if cmd.Flags().Changed("region") {
 				cfg.Region = region
 			}
+			if cmd.Flags().Changed("aws-config-file") {
+				cfg.AWSConfigFile = awsConfigFile
+			}
 			if cmd.Flags().Changed("concurrency") {
 				cfg.Batch.Concurrency = concurrency
 			}
@@ -58,6 +62,13 @@ func Execute(ctx context.Context) error {
 			}
 			if err := applyDemo(app, &cfg, demoPath); err != nil {
 				return err
+			}
+			// Re-validate: config.Load only saw the file and the environment,
+			// so without this pass a flag can install a value the same check
+			// would have rejected a moment earlier. After applyDemo, so a
+			// fixture run is never held up by the real credential setup.
+			if err := cfg.Validate(); err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
 			app.Cfg = cfg
 
@@ -83,6 +94,8 @@ func Execute(ctx context.Context) error {
 	pf.StringVar(&cfgPath, "config", "", "config file (default ~/.config/aft-ops/config.yaml)")
 	pf.StringVar(&profile, "profile", "", "AWS profile")
 	pf.StringVar(&region, "region", "", "AWS region")
+	pf.StringVar(&awsConfigFile, "aws-config-file", "",
+		"AWS shared config file the profile is looked up in (default: $AWS_CONFIG_FILE, else ~/.aws/config)")
 	pf.StringVarP(&outFormat, "output", "o", string(output.FormatTable), "output format: table|json")
 	pf.StringVar(&demoPath, "demo", "",
 		"run against a local fixture instead of AWS (offline demo; see docs/demo)")
@@ -139,6 +152,7 @@ func applyDemo(app *App, cfg *config.Config, path string) error {
 		cfg.Profile = "demo"
 	}
 	cfg.WriteProfile = ""
+	cfg.AWSConfigFile = "" // the fixture replaces the credential source entirely
 	cfg.Region = id.Region
 	cfg.Metrics.Enabled = false
 	return nil

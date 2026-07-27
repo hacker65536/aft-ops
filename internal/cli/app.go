@@ -108,7 +108,7 @@ func (a *App) readAWSLocked(ctx context.Context) (aws.Config, error) {
 	if a.readCfg != nil {
 		return *a.readCfg, nil
 	}
-	cfg, err := awsx.Load(ctx, a.Cfg.Profile, a.Cfg.Region, a.rec)
+	cfg, err := awsx.Load(ctx, a.Cfg.Profile, a.Cfg.Region, a.Cfg.AWSConfigFile, a.rec)
 	if err != nil {
 		return aws.Config{}, err
 	}
@@ -144,7 +144,7 @@ func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 	if a.writeCfg != nil {
 		return *a.writeCfg, nil
 	}
-	cfg, err := awsx.Load(ctx, wp, a.Cfg.Region, a.rec)
+	cfg, err := awsx.Load(ctx, wp, a.Cfg.Region, a.Cfg.AWSConfigFile, a.rec)
 	if err != nil {
 		return aws.Config{}, err
 	}
@@ -156,8 +156,8 @@ func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 		fmt.Fprintln(os.Stderr, "warning: could not resolve the write profile's identity:", err)
 		return cfg, nil
 	}
-	fmt.Fprintf(os.Stderr, "aws (write): account %s · region %s · profile %s\n",
-		aws.ToString(out.Account), cfg.Region, wp)
+	fmt.Fprintf(os.Stderr, "aws (write): account %s · region %s · profile %s%s\n",
+		aws.ToString(out.Account), cfg.Region, wp, a.awsConfigFileNote())
 	return cfg, nil
 }
 
@@ -255,8 +255,8 @@ func (a *App) resolveIdentityLocked(ctx context.Context, cfg aws.Config, force b
 // actually checked this run, or it becomes a source of false confidence
 // rather than a guard against it.
 func (a *App) announceTarget(region string, verified bool) {
-	line := fmt.Sprintf("aws: account %s · region %s · profile %s",
-		a.accountID, region, a.profileLabel())
+	line := fmt.Sprintf("aws: account %s · region %s · profile %s%s",
+		a.accountID, region, a.profileLabel(), a.awsConfigFileNote())
 	if !verified {
 		line += "  (identity from cache; --refresh re-checks)"
 	}
@@ -287,6 +287,21 @@ func (a *App) profileLabel() string {
 		return fmt.Sprintf("(unset — using AWS_PROFILE=%s)", env)
 	}
 	return "(unset — using the default credential chain)"
+}
+
+// awsConfigFileNote names the shared config file the profile was looked up
+// in, but only when it is not the SDK's default one — the banner earns its
+// keep by being short enough to read every run.
+//
+// The ambient AWS_CONFIG_FILE is reported too, not just our own setting.
+// Operators who keep one file per organization switch between them in the
+// shell, and "the profile resolved against a file I did not mean" is the
+// failure this line is here to make visible.
+func (a *App) awsConfigFileNote() string {
+	if a.Cfg.AWSConfigFile == "" && os.Getenv("AWS_CONFIG_FILE") == "" {
+		return ""
+	}
+	return " · config " + awsx.ConfigFileLabel(a.Cfg.AWSConfigFile)
 }
 
 // BatchConfig maps config to the batch engine.

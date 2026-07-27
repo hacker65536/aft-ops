@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,5 +121,86 @@ func TestWriteProfileFallback(t *testing.T) {
 	c.WriteProfile = "admin"
 	if c.EffectiveWriteProfile() != "admin" {
 		t.Fatal("explicit write profile")
+	}
+}
+
+func TestAWSConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "my-sso-config")
+	write(t, real, "[profile poc]\nregion = us-east-1\n")
+	other := filepath.Join(dir, "other-config")
+	write(t, other, "[profile work]\nregion = ap-northeast-1\n")
+
+	path := filepath.Join(dir, "config.yaml")
+	write(t, path, "aws_config_file: "+other+"\n")
+
+	// env beats the file, same as every other key
+	t.Setenv("AFT_OPS_AWS_CONFIG_FILE", real)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AWSConfigFile != real {
+		t.Fatalf("env must beat file: got %q", cfg.AWSConfigFile)
+	}
+
+	// Unset means "let the SDK decide": the default must stay empty rather
+	// than name a file of our own choosing, or the SDK's AWS_CONFIG_FILE
+	// would silently stop working.
+	if d := Default(); d.AWSConfigFile != "" {
+		t.Fatalf("default must stay empty: %q", d.AWSConfigFile)
+	}
+}
+
+// A config file that does not exist is caught here rather than surfacing
+// from the SDK as "profile not found" — the message that sends the diagnosis
+// after the wrong thing entirely.
+func TestAWSConfigFileMustExist(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	write(t, path, "aws_config_file: "+filepath.Join(dir, "nope")+"\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("a missing aws_config_file must be rejected")
+	}
+	if !strings.Contains(err.Error(), "aws_config_file") {
+		t.Fatalf("the error must name the key: %v", err)
+	}
+}
+
+// Validate runs twice (file+env, then again after flags), so it must not
+// change the config on the second pass.
+func TestValidateIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "cfg")
+	write(t, real, "")
+
+	c := Default()
+	c.AWSConfigFile = real
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	first := c.AWSConfigFile
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.AWSConfigFile != first {
+		t.Fatalf("second pass changed the path: %q -> %q", first, c.AWSConfigFile)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	if got := ExpandHome("~/.aws/config"); got != filepath.Join(home, ".aws", "config") {
+		t.Fatalf("ExpandHome: %q", got)
+	}
+	// A ~ that is not a home reference is left alone.
+	for _, in := range []string{"/abs/path", "relative/path", "~user/path", ""} {
+		if got := ExpandHome(in); got != in {
+			t.Fatalf("ExpandHome(%q) = %q, want unchanged", in, got)
+		}
 	}
 }

@@ -127,6 +127,14 @@ profile: my-aft-management-profile
 region: ap-northeast-1
 account_source: aft-dynamodb   # aft-dynamodb | organizations | static
 
+# Which shared config file `profile` is looked up in. Unset (the default)
+# leaves this to the SDK: $AWS_CONFIG_FILE if set, otherwise ~/.aws/config.
+# Set it when you keep one config file per AWS organization — it ties the
+# profile to the file that defines it, so switching shells cannot leave a
+# configured profile pointing at a file that never had it.
+# A value here (or --aws-config-file) overrides $AWS_CONFIG_FILE.
+aws_config_file: ~/.aws/my-sso-config
+
 batch:
   concurrency: 10
   rps: 8

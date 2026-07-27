@@ -7,6 +7,7 @@ package awsx
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -19,8 +20,26 @@ import (
 // the adaptive client-side rate limiter.
 const maxAttempts = 8
 
+// ConfigFileLabel names the shared config file that profile lookups resolve
+// against, for diagnostics. An empty configFile hands the decision to the
+// SDK, so report what the SDK will decide rather than saying nothing: the
+// case worth reporting is precisely the one where an ambient AWS_CONFIG_FILE
+// is not the file the operator had in mind.
+func ConfigFileLabel(configFile string) string {
+	if configFile != "" {
+		return configFile
+	}
+	if v := os.Getenv("AWS_CONFIG_FILE"); v != "" {
+		return v + " (from AWS_CONFIG_FILE)"
+	}
+	return "~/.aws/config (SDK default)"
+}
+
 // Load builds an aws.Config for the given profile/region. rec may be nil.
-func Load(ctx context.Context, profile, region string, rec *metrics.Recorder) (aws.Config, error) {
+//
+// configFile pins the shared config file the profile is looked up in; empty
+// leaves the SDK's own resolution alone (AWS_CONFIG_FILE, else ~/.aws/config).
+func Load(ctx context.Context, profile, region, configFile string, rec *metrics.Recorder) (aws.Config, error) {
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRetryer(func() aws.Retryer {
 			return retry.NewAdaptiveMode(func(o *retry.AdaptiveModeOptions) {
@@ -36,10 +55,17 @@ func Load(ctx context.Context, profile, region string, rec *metrics.Recorder) (a
 	if region != "" {
 		opts = append(opts, awsconfig.WithRegion(region))
 	}
+	if configFile != "" {
+		opts = append(opts, awsconfig.WithSharedConfigFiles([]string{configFile}))
+	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return aws.Config{}, fmt.Errorf("load AWS config (profile=%q): %w", profile, err)
+		// Name the file the profile was looked up in. The SDK's own message
+		// says only that the profile is missing, which is the wrong half of
+		// the story when several config files are in rotation.
+		return aws.Config{}, fmt.Errorf("load AWS config (profile=%q, config file=%s): %w",
+			profile, ConfigFileLabel(configFile), err)
 	}
 	if rec != nil {
 		cfg.APIOptions = append(cfg.APIOptions, metrics.Middleware(rec))

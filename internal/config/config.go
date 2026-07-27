@@ -46,6 +46,15 @@ type Config struct {
 	Profile      string `yaml:"profile"`
 	WriteProfile string `yaml:"write_profile"` // optional; falls back to Profile
 	Region       string `yaml:"region"`
+	// AWSConfigFile pins which shared config file the profiles above are
+	// looked up in. Operators who keep one file per AWS organization switch
+	// between them with AWS_CONFIG_FILE, which leaves a configured profile
+	// name pointing at a file that may not define it. Setting this ties the
+	// profile to the file that defines it, so the pair travels together.
+	//
+	// Empty (the default) leaves the SDK's own resolution alone: AWS_CONFIG_FILE
+	// if set, otherwise ~/.aws/config. A value here overrides both.
+	AWSConfigFile string `yaml:"aws_config_file"`
 
 	AccountSource      AccountSource `yaml:"account_source"`
 	AFTMetadataTable   string        `yaml:"aft_metadata_table"`
@@ -152,13 +161,27 @@ func Load(path string) (Config, error) {
 	}
 
 	applyEnv(&cfg)
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
 }
 
-func (c *Config) validate() error {
+// Validate checks the merged configuration and normalizes the paths it can
+// (a leading ~). It runs once here over file+env and again in the CLI layer
+// once flags are merged on top — flags are applied after Load returns, so a
+// single pass would let `--concurrency 0` or a nonexistent --aws-config-file
+// straight through. It is therefore idempotent by construction.
+func (c *Config) Validate() error {
+	if c.AWSConfigFile != "" {
+		c.AWSConfigFile = ExpandHome(c.AWSConfigFile)
+		// Check here rather than letting the SDK find out: a missing config
+		// file surfaces from the SDK as "profile not found", which sends the
+		// diagnosis after the wrong thing entirely.
+		if _, err := os.Stat(c.AWSConfigFile); err != nil {
+			return fmt.Errorf("aws_config_file %q is not readable: %w", c.AWSConfigFile, err)
+		}
+	}
 	switch c.AccountSource {
 	case SourceAFTDynamoDB, SourceOrganizations, SourceStatic:
 	default:
@@ -191,6 +214,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("AFT_OPS_REGION"); v != "" {
 		c.Region = v
+	}
+	if v := os.Getenv("AFT_OPS_AWS_CONFIG_FILE"); v != "" {
+		c.AWSConfigFile = v
 	}
 	if v := os.Getenv("AFT_OPS_ACCOUNT_SOURCE"); v != "" {
 		c.AccountSource = AccountSource(v)

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DefaultConfigPath honors XDG_CONFIG_HOME, defaulting to
@@ -36,6 +37,20 @@ func DefaultMetricsDir() string {
 		return filepath.Join(os.TempDir(), "aft-ops-metrics")
 	}
 	return filepath.Join(home, ".local", "state", "aft-ops", "metrics")
+}
+
+// ExpandHome resolves a leading ~ to the user's home directory. Paths come
+// from a YAML file and from flags, where "~/.aws/my-sso-config" is what a
+// person naturally writes but no shell is around to expand it.
+func ExpandHome(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~"))
 }
 
 func configHome() string {
