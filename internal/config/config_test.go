@@ -126,7 +126,7 @@ func TestWriteProfileFallback(t *testing.T) {
 
 func TestAWSConfigFile(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "my-sso-config")
+	real := filepath.Join(dir, "config-sandbox")
 	write(t, real, "[profile poc]\nregion = us-east-1\n")
 	other := filepath.Join(dir, "other-config")
 	write(t, other, "[profile work]\nregion = ap-northeast-1\n")

@@ -40,7 +40,7 @@ func DefaultMetricsDir() string {
 }
 
 // ExpandHome resolves a leading ~ to the user's home directory. Paths come
-// from a YAML file and from flags, where "~/.aws/my-sso-config" is what a
+// from a YAML file and from flags, where "~/.aws/config-sandbox" is what a
 // person naturally writes but no shell is around to expand it.
 func ExpandHome(path string) string {
 	if path != "~" && !strings.HasPrefix(path, "~/") {

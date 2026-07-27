@@ -133,7 +133,7 @@ account_source: aft-dynamodb   # aft-dynamodb | organizations | static
 # profile to the file that defines it, so switching shells cannot leave a
 # configured profile pointing at a file that never had it.
 # A value here (or --aws-config-file) overrides $AWS_CONFIG_FILE.
-aws_config_file: ~/.aws/my-sso-config
+aws_config_file: ~/.aws/config-sandbox
 
 batch:
   concurrency: 10

@@ -474,7 +474,7 @@ TUI の各操作は core 層サービス呼び出しであり、CLI と完全に
 # ~/.config/aft-ops/config.yaml（--config で上書き可）
 profile: my-aft-management-profile   # AFT 管理アカウント用の AWS プロファイル
 region: ap-northeast-1
-aws_config_file: ~/.aws/my-sso-config  # profile を引く shared config file（後述）
+aws_config_file: ~/.aws/config-sandbox  # profile を引く shared config file（後述）
 account_source: aft-dynamodb
 
 batch:
