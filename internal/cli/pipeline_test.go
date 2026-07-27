@@ -227,3 +227,39 @@ func TestWriteLogSectionsKeepsUnreadableBuildVisible(t *testing.T) {
 		t.Errorf("one unreadable build hid the other, got\n%s", out)
 	}
 }
+
+func TestParseStatusFiltersCanonicalizes(t *testing.T) {
+	got, err := parseStatusFilters([]string{"failed", "  INPROGRESS "})
+	if err != nil {
+		t.Fatalf("parseStatusFilters: %v", err)
+	}
+	if len(got) != 2 || got[0] != "Failed" || got[1] != "InProgress" {
+		t.Errorf("parseStatusFilters = %v, want [Failed InProgress]", got)
+	}
+	if _, err := parseStatusFilters([]string{"Failed", "Faild"}); err == nil {
+		t.Error("a typo among valid values must still be reported")
+	} else if !strings.Contains(err.Error(), "Faild") {
+		t.Errorf("error should name the offending value, got %v", err)
+	}
+}
+
+// A pipeline whose status could not be fetched is listed as "fetch-error",
+// so that is the value that has to select it — not the Unknown it degrades
+// to internally.
+func TestFilterSummariesMatchesFetchErrorRows(t *testing.T) {
+	items := fixture()
+	items = append(items, model.PipelineSummary{
+		PipelineName: "444444444444-customizations-pipeline",
+		AccountID:    "444444444444",
+		AccountName:  "charlie",
+		FetchError:   "ThrottlingException",
+	})
+
+	got := filterSummaries(items, []string{"fetch-error"}, "")
+	if len(got) != 1 || got[0].AccountName != "charlie" {
+		t.Errorf("fetch-error filter = %v, want [charlie]", pipelineNames(got))
+	}
+	if got := filterSummaries(items, []string{"Unknown"}, ""); len(got) != 0 {
+		t.Errorf("Unknown must not pick up fetch-error rows, got %v", pipelineNames(got))
+	}
+}

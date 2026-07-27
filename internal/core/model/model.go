@@ -25,7 +25,21 @@ const (
 	StatusCancelled  Status = "Cancelled"
 	StatusAbandoned  Status = "Abandoned" // action-level only
 	StatusUnknown    Status = "Unknown"   // no execution yet, or fetch failed
+
+	// StatusFetchError is not a CodePipeline status. It is what the tables
+	// print in the STATUS column for a pipeline whose status could not be
+	// fetched, and therefore what a reader will type into --status, so the
+	// filters accept it and match it against PipelineSummary.FetchError.
+	StatusFetchError Status = "fetch-error"
 )
+
+// FilterableStatuses lists every value --status accepts, in the order the
+// counts line presents them.
+var FilterableStatuses = []Status{
+	StatusSucceeded, StatusFailed, StatusInProgress, StatusStopped,
+	StatusStopping, StatusSuperseded, StatusCancelled, StatusAbandoned,
+	StatusUnknown, StatusFetchError,
+}
 
 // InFlight reports whether the execution is still running.
 func (s Status) InFlight() bool {
@@ -54,6 +68,28 @@ func ParseStatus(s string) Status {
 	default:
 		return StatusUnknown
 	}
+}
+
+// ParseStatusFilter validates one user-supplied --status value, ignoring
+// case, and returns its canonical spelling.
+//
+// ParseStatus cannot do this job: it normalizes whatever AWS sends and so
+// must fall back to Unknown for anything it does not recognize. Coming from
+// a filter the same input means the opposite — a typo — and mapping it to
+// Unknown makes `--status Faild` select nothing and report success, which
+// reads exactly like "every pipeline is healthy".
+func ParseStatusFilter(s string) (Status, error) {
+	v := strings.TrimSpace(s)
+	for _, st := range FilterableStatuses {
+		if strings.EqualFold(v, string(st)) {
+			return st, nil
+		}
+	}
+	names := make([]string, len(FilterableStatuses))
+	for i, st := range FilterableStatuses {
+		names[i] = string(st)
+	}
+	return "", fmt.Errorf("invalid status %q (want %s)", s, strings.Join(names, "|"))
 }
 
 // Account is an AWS account vended by AFT.

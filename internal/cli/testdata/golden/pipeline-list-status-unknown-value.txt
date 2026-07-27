@@ -1,8 +1,0 @@
-$ aft-ops pipeline list --status Bogus
-exit 0
---- stdout ---
-ACCOUNT NAME  ACCOUNT ID  STATUS  LAST UPDATE  EXECUTION
---- stderr ---
-aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
-total=0 
-statuses: 42 refetched

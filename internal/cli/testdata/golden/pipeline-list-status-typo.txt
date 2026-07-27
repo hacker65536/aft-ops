@@ -1,0 +1,5 @@
+$ aft-ops pipeline list --status Bogus
+exit 2
+--- stdout ---
+--- stderr ---
+Error: invalid status "Bogus" (want Succeeded|Failed|InProgress|Stopped|Stopping|Superseded|Cancelled|Abandoned|Unknown|fetch-error)

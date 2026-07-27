@@ -1,0 +1,9 @@
+$ aft-ops pipeline list --status Unknown
+exit 0
+--- stdout ---
+ACCOUNT NAME    ACCOUNT ID    STATUS   LAST UPDATE  EXECUTION
+archive-legacy  100000000041  Unknown  -            -
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=1 Unknown=1
+statuses: 42 refetched

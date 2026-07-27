@@ -136,7 +136,7 @@ func PipelineTable(w io.Writer, items []model.PipelineSummary, color bool) {
 		}
 		status := styleStatus(p.Status(), color)
 		if p.FetchError != "" {
-			status = "fetch-error"
+			status = string(model.StatusFetchError)
 			if color {
 				status = styleFailed.Render(status)
 			}
@@ -172,7 +172,7 @@ func PipelineCounts(w io.Writer, items []model.PipelineSummary) {
 		}
 	}
 	if fetchErrs > 0 {
-		parts = append(parts, fmt.Sprintf("fetch-error=%d", fetchErrs))
+		parts = append(parts, fmt.Sprintf("%s=%d", model.StatusFetchError, fetchErrs))
 	}
 	fmt.Fprintf(w, "total=%d %s\n", len(items), strings.Join(parts, " "))
 }

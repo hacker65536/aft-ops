@@ -206,3 +206,48 @@ func TestElapsedNeverGoesNegative(t *testing.T) {
 		t.Errorf("terminal Elapsed without an end time = %v, want 0", got)
 	}
 }
+
+func TestParseStatusFilterAccepts(t *testing.T) {
+	cases := map[string]Status{
+		"Failed":      StatusFailed,
+		"failed":      StatusFailed, // case-insensitive
+		"  Failed  ":  StatusFailed, // trimmed
+		"INPROGRESS":  StatusInProgress,
+		"Unknown":     StatusUnknown,    // selects never-run pipelines
+		"fetch-error": StatusFetchError, // what the STATUS column prints
+	}
+	for in, want := range cases {
+		got, err := ParseStatusFilter(in)
+		if err != nil {
+			t.Errorf("ParseStatusFilter(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseStatusFilter(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The whole point of the filter parser: a misspelling must be reported, not
+// quietly turned into Unknown the way ParseStatus does for AWS input.
+func TestParseStatusFilterRejectsTypos(t *testing.T) {
+	for _, in := range []string{"Faild", "Bogus", "", "succeed"} {
+		if got, err := ParseStatusFilter(in); err == nil {
+			t.Errorf("ParseStatusFilter(%q) = %q, want an error", in, got)
+		}
+	}
+	if got := ParseStatus("Faild"); got != StatusUnknown {
+		t.Errorf("ParseStatus still normalizes AWS input: got %q", got)
+	}
+}
+
+// Every filterable value must have a spelling the parser accepts, so the
+// list in the flag help can never drift from what validation allows.
+func TestFilterableStatusesRoundTrip(t *testing.T) {
+	for _, s := range FilterableStatuses {
+		got, err := ParseStatusFilter(string(s))
+		if err != nil || got != s {
+			t.Errorf("ParseStatusFilter(%q) = %q, %v", s, got, err)
+		}
+	}
+}

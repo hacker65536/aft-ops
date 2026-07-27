@@ -201,13 +201,17 @@ func newPipelineListCmd(app *App) *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
+			statuses, err := parseStatusFilters(statusFilter)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
 
 			render := func() error {
 				summaries, stats, err := fetchSummaries(cmd.Context(), app)
 				if err != nil {
 					return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 				}
-				summaries = filterSummaries(summaries, statusFilter, accountQuery)
+				summaries = filterSummaries(summaries, statuses, accountQuery)
 				model.SortSummaries(summaries, key, order)
 
 				if app.Format == output.FormatJSON {
@@ -237,7 +241,7 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVarP(&statusFilter, "status", "s", nil,
-		"filter by status (comma-separated: Succeeded,Failed,InProgress,...)")
+		"filter by status, comma-separated: "+statusFlagValues())
 	cmd.Flags().StringVarP(&accountQuery, "account", "a", "",
 		"filter by account id or name substring")
 	cmd.Flags().BoolVar(&failOnError, "fail-on-error", false,
@@ -643,6 +647,32 @@ func clearProgress(app *App) {
 	}
 }
 
+// statusFlagValues lists the accepted --status values for the flag help, so
+// the set a typo is rejected against is the set the help shows.
+func statusFlagValues() string {
+	names := make([]string, len(model.FilterableStatuses))
+	for i, s := range model.FilterableStatuses {
+		names[i] = string(s)
+	}
+	return strings.Join(names, "|")
+}
+
+// parseStatusFilters validates a --status list and returns the canonical
+// spellings. Callers must do this before resolving targets or fetching
+// anything: an unknown value has to stop the run while it is still free,
+// not after a full fan-out has been paid for.
+func parseStatusFilters(values []string) ([]string, error) {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		s, err := model.ParseStatusFilter(v)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, string(s))
+	}
+	return out, nil
+}
+
 func filterSummaries(items []model.PipelineSummary, statuses []string, accountQuery string) []model.PipelineSummary {
 	statusSet := map[string]bool{}
 	for _, s := range statuses {
@@ -652,7 +682,13 @@ func filterSummaries(items []model.PipelineSummary, statuses []string, accountQu
 
 	var out []model.PipelineSummary
 	for _, it := range items {
-		if len(statusSet) > 0 && !statusSet[strings.ToLower(string(it.Status()))] {
+		// A row whose status could not be fetched is filtered as what the
+		// table shows it as, not as the Unknown it degrades to.
+		status := it.Status()
+		if it.FetchError != "" {
+			status = model.StatusFetchError
+		}
+		if len(statusSet) > 0 && !statusSet[strings.ToLower(string(status))] {
 			continue
 		}
 		if q != "" &&
@@ -690,8 +726,15 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 				return &ExitError{Code: ExitToolError,
 					Message: "no targets: give arguments, --file, or --status"}
 			}
+			// Before releaseTargets: a --status selection makes that call
+			// refetch every pipeline's status, so a typo caught afterwards
+			// would have cost a full fan-out to reach "no matching targets".
+			statuses, err := parseStatusFilters(statusFilter)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
 
-			targets, err := releaseTargets(ctx, app, args, fromFile, statusFilter)
+			targets, err := releaseTargets(ctx, app, args, fromFile, statuses)
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
@@ -778,7 +821,7 @@ arguments, via --file (one per line, "-" for stdin), or selected by
 		},
 	}
 	cmd.Flags().StringSliceVarP(&statusFilter, "status", "s", nil,
-		"select targets by current status (e.g. Failed)")
+		"select targets by current status, comma-separated: "+statusFlagValues())
 	cmd.Flags().StringVarP(&fromFile, "file", "f", "",
 		"read targets from file, one per line (\"-\" for stdin)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show targets without releasing")
