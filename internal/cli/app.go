@@ -79,6 +79,14 @@ func (a *App) initMetrics() {
 	a.rec = rec
 }
 
+// MetricsPath is the file this run is recording to, or "" when metrics are
+// disabled. `metrics show` uses it to leave itself out of its own report.
+func (a *App) MetricsPath() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.rec.Path()
+}
+
 // closeMetrics is idempotent: it runs from a defer in Execute (cobra skips
 // PersistentPostRun when a command returns an error, which would otherwise
 // leave empty metrics files behind).

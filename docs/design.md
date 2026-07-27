@@ -220,7 +220,13 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 
 - AWS SDK v2 の **middleware** で全 API 呼び出しをフック: サービス/オペレーション/所要時間/成否/Throttling 有無を記録
 - 実行ごとに `~/.local/state/aft-ops/metrics/<timestamp>.jsonl` に追記
-- `aft-ops metrics show [--last N]`: オペレーション別の呼び出し数・p50/p99・throttle 率を集計表示
+- `aft-ops metrics show [--last N]`: オペレーション別の呼び出し数・p50/p99/max・throttle 率を集計表示。
+  レイテンシは平均ではなく**パーセンタイル**（nearest-rank）。並列度・RPS の調整は throttle と
+  向き合う作業であり、それはテールに出る。平均はテールに引きずられて不穏に見える一方で
+  どこまで悪化したかは隠す。nearest-rank にしているのは、返る値が必ず実測されたレイテンシに
+  なるため（サンプルが少ない run では p99 が max に一致する。それが正直な答え）。
+  **集計対象から自分自身の run を除く**（実行中の run は最新ファイルだが 1 回も API を
+  呼んでいないので、既定の `--last 1` がそれを拾うと空の表になる）
 - 将来: 計測結果から推奨 Concurrency/RPS を提示（自動チューニング）
 
 ## 7. キャッシュ（internal/cache）

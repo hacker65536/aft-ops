@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -107,13 +108,19 @@ func (r *Recorder) Close() error {
 }
 
 // OpStat is an aggregate over one service/operation pair.
+//
+// Latency is reported as percentiles rather than a mean. This exists to tune
+// concurrency and rate limits against throttling, and throttling shows up in
+// the tail: an average is dragged toward it far enough to look alarming while
+// still hiding how bad it got.
 type OpStat struct {
 	Service    string  `json:"service"`
 	Operation  string  `json:"operation"`
 	Calls      int     `json:"calls"`
 	Errors     int     `json:"errors"`
 	Throttles  int     `json:"throttles"`
-	AvgMs      int64   `json:"avg_ms"`
+	P50Ms      int64   `json:"p50_ms"`
+	P99Ms      int64   `json:"p99_ms"`
 	MaxMs      int64   `json:"max_ms"`
 	ThrottlePc float64 `json:"throttle_pct"`
 }
@@ -122,7 +129,7 @@ type OpStat struct {
 func Summarize(entries []Entry) []OpStat {
 	type acc struct {
 		OpStat
-		totalMs int64
+		durations []int64
 	}
 	m := map[string]*acc{}
 	for _, e := range entries {
@@ -133,10 +140,7 @@ func Summarize(entries []Entry) []OpStat {
 			m[k] = a
 		}
 		a.Calls++
-		a.totalMs += e.DurationMs
-		if e.DurationMs > a.MaxMs {
-			a.MaxMs = e.DurationMs
-		}
+		a.durations = append(a.durations, e.DurationMs)
 		if e.Error != "" {
 			a.Errors++
 		}
@@ -147,7 +151,10 @@ func Summarize(entries []Entry) []OpStat {
 	out := make([]OpStat, 0, len(m))
 	for _, a := range m {
 		if a.Calls > 0 {
-			a.AvgMs = a.totalMs / int64(a.Calls)
+			slices.Sort(a.durations)
+			a.P50Ms = percentile(a.durations, 50)
+			a.P99Ms = percentile(a.durations, 99)
+			a.MaxMs = a.durations[len(a.durations)-1]
 			a.ThrottlePc = float64(a.Throttles) / float64(a.Calls) * 100
 		}
 		out = append(out, a.OpStat)
@@ -159,6 +166,27 @@ func Summarize(entries []Entry) []OpStat {
 		return out[i].Operation < out[j].Operation
 	})
 	return out
+}
+
+// percentile returns the nearest-rank percentile of an ascending slice: the
+// smallest sample at or above p% of them.
+//
+// Nearest rank rather than interpolation, because every value it can return
+// is a latency that was actually observed. With a handful of samples the high
+// percentiles collapse onto the maximum, which is the honest answer for a run
+// that small — an interpolated p99 over six calls invents a number.
+func percentile(sorted []int64, p int) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	rank := (p*len(sorted) + 99) / 100 // ceil(p/100 * n)
+	if rank < 1 {
+		rank = 1
+	}
+	if rank > len(sorted) {
+		rank = len(sorted)
+	}
+	return sorted[rank-1]
 }
 
 // ReadFile parses a JSONL metrics file.

@@ -108,3 +108,92 @@ func TestNilRecorderIsInert(t *testing.T) {
 		t.Errorf("closing a nil recorder: %v", err)
 	}
 }
+
+// Nearest rank: the result is always a sample that was measured, and small
+// runs report their maximum rather than an interpolation between values that
+// never occurred.
+func TestPercentileNearestRank(t *testing.T) {
+	cases := []struct {
+		name   string
+		sorted []int64
+		p      int
+		want   int64
+	}{
+		{"empty", nil, 50, 0},
+		{"single sample is every percentile", []int64{10}, 50, 10},
+		{"single sample p99", []int64{10}, 99, 10},
+		{"pair takes the lower half", []int64{10, 20}, 50, 10},
+		{"pair p99 is the max", []int64{10, 20}, 99, 20},
+		{"ten samples p50", []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 50, 5},
+		{"ten samples p99 rounds up to the max", []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 99, 10},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := percentile(c.sorted, c.p); got != c.want {
+				t.Errorf("percentile(%v, %d) = %d, want %d", c.sorted, c.p, got, c.want)
+			}
+		})
+	}
+}
+
+func TestPercentileOverAHundredSamples(t *testing.T) {
+	var sorted []int64
+	for i := int64(1); i <= 100; i++ {
+		sorted = append(sorted, i)
+	}
+	if got := percentile(sorted, 50); got != 50 {
+		t.Errorf("p50 = %d, want 50", got)
+	}
+	if got := percentile(sorted, 99); got != 99 {
+		t.Errorf("p99 = %d, want 99", got)
+	}
+}
+
+// The tail is the point: one slow call among fast ones must be visible at p99
+// while p50 keeps reporting what a typical call cost.
+func TestSummarizeReportsTailLatencyAndRates(t *testing.T) {
+	var entries []Entry
+	for _, ms := range []int64{10, 10, 10, 10, 10, 10, 10, 10, 10, 900} {
+		entries = append(entries, Entry{
+			Service: "codepipeline", Operation: "ListPipelineExecutions", DurationMs: ms,
+		})
+	}
+	entries = append(entries,
+		Entry{Service: "codepipeline", Operation: "ListPipelineExecutions",
+			DurationMs: 20, Throttled: true},
+		Entry{Service: "sts", Operation: "GetCallerIdentity",
+			DurationMs: 5, Error: "boom"},
+	)
+
+	stats := Summarize(entries)
+	if len(stats) != 2 {
+		t.Fatalf("got %d operations, want 2", len(stats))
+	}
+	// Sorted by service then operation.
+	got := stats[0]
+	if got.Service != "codepipeline" || got.Calls != 11 {
+		t.Fatalf("first stat = %+v", got)
+	}
+	if got.P50Ms != 10 {
+		t.Errorf("p50 = %d, want 10 (the typical call)", got.P50Ms)
+	}
+	if got.P99Ms != 900 || got.MaxMs != 900 {
+		t.Errorf("p99 = %d, max = %d, want the 900ms outlier in both", got.P99Ms, got.MaxMs)
+	}
+	if got.Throttles != 1 {
+		t.Errorf("throttles = %d, want 1", got.Throttles)
+	}
+	if want := 100.0 / 11; got.ThrottlePc < want-0.01 || got.ThrottlePc > want+0.01 {
+		t.Errorf("throttle%% = %v, want %v", got.ThrottlePc, want)
+	}
+
+	if sts := stats[1]; sts.Errors != 1 || sts.P50Ms != 5 || sts.MaxMs != 5 {
+		t.Errorf("sts stat = %+v", sts)
+	}
+}
+
+func TestSummarizeEmpty(t *testing.T) {
+	if got := Summarize(nil); len(got) != 0 {
+		t.Errorf("Summarize(nil) = %v, want no rows", got)
+	}
+}
