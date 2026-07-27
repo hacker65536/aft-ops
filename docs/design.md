@@ -240,7 +240,9 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 
 - 保存先: `~/.cache/aft-ops/<org-id or profile>/` （プロファイル毎に分離し、業務/PoC org の取り違えを構造的に防止）
 - 形式: JSON + メタデータ（取得時刻・スキーマバージョン・取得元プロファイル）
-- 出力時に stale 情報を明示（`cached 3h ago` 等）。`--no-cache` / `--refresh` を全読み取りコマンドでサポート
+- 出力時に stale 情報を明示（`cached 3h ago` 等）。`--refresh` を全読み取りコマンドでサポート
+  （キャッシュを読まずに取り直す、が唯一の要求なので `--no-cache` は設けない。
+  「取り直した結果を書かない」用途は無く、2 つあるとどちらを使うのか毎回考えることになる）
 - `aft-ops cache status | clear | refresh`
 
 ### 7.1 アカウント情報のソース
@@ -582,8 +584,8 @@ metrics はデモ時に無効化する（フェイク呼び出しは SDK middlew
 |---|---|
 | core / batch / cache | adapter interface のモックによる unit test。batch はレート・キャンセル・部分失敗を重点的に |
 | awsx adapter | SDK の `smithy` middleware レベルの stub。実 API は叩かない |
-| CLI | golden file test（table/json 出力の回帰） |
-| TUI | `teatest`（bubbletea 公式テストユーティリティ）でキー操作→画面遷移 |
+| CLI | golden file test（`--demo` fixture に対してコマンドライン・exit code・stdout・stderr を 1 ファイルに記録。`go test ./internal/cli -update` で再記録） |
+| TUI | 各画面の `Update` に `tea.KeyMsg` / 各種 msg を直接流し、返る model と `tea.Cmd` を検証するテーブルドリブン。`teatest` は使わない（プロセスと端末を立てないぶん速く、描画タイミングに左右されないため） |
 | E2E | 検証用の AFT 環境で read 系 + release の疎通確認。本番相当環境では read 系のみ手動確認 |
 | demo fixture | 同梱 fixture を `internal/demo` のフェイク経由でコアサービスに流し、在庫フィルタ・ステータス分布・アクション順・ログ抽出・in-flight の完了・release を検証（fixture の腐敗を録画ではなくビルドで検出する） |
 
