@@ -566,6 +566,11 @@ metrics:
     `aws (write):` 行を出していた。突き合わせていなかっただけ
   - `--dry-run` は書き込みクレデンシャルを解決しないためアカウント検証もできない。
     実行時に使われる profile 名だけを「未検証」と明示して stderr に出す
+  - **必要な IAM 権限は README の Permissions 節**（read 側の API 一覧と、write 側の
+    `codepipeline:StartPipelineExecution` 1 本だけのポリシー）。AFT 自身が作るロールは
+    サービスロール（サービス信頼で assume 不可）か `AWSAFTExecution` / `AWSAFTService`
+    （中身は `AdministratorAccess` で、AFT の自動化自身が使う ID）しかないため、
+    **オペレータ用には別途最小権限のロールを用意する前提**で設計している
 - **`aws_config_file`（任意、env `AFT_OPS_AWS_CONFIG_FILE` / flag `--aws-config-file`）**:
   profile を引く shared config file を固定する。組織ごとに config file を分けて
   `AWS_CONFIG_FILE` で切り替える運用では、設定ファイル側の `profile` は固定なのに

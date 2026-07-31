@@ -194,6 +194,65 @@ whole inventory before deciding what to release, and named targets and
 `--account` groups are refetched individually, so neither the selection nor
 the in-progress skip is made on minutes-old data.
 
+## Permissions
+
+Everything runs against the AFT management account, and the split the tool
+asks for is the one worth having: browsing is read-only, and the only thing it
+ever writes is `codepipeline:StartPipelineExecution`.
+
+AFT's own roles are not a fit for this. The `aft-*` roles it creates are
+service roles trusted by CodePipeline, CodeBuild, Lambda and Step Functions, so
+no operator can assume them; `AWSAFTAdmin` can only assume two other roles and
+holds no service permissions of its own; and `AWSAFTExecution` / `AWSAFTService`
+carry `AdministratorAccess` and are the identity AFT's own automation runs as —
+borrowing them buys no least privilege and mixes your actions with the
+framework's in CloudTrail. Grant the two below instead.
+
+### Reading
+
+`ReadOnlyAccess` covers it. To grant exactly what is used:
+
+| Service | Actions |
+|---|---|
+| CodePipeline | `ListPipelines`, `GetPipelineState`, `ListPipelineExecutions`, `ListActionExecutions` |
+| CodeBuild | `BatchGetBuilds` |
+| CloudWatch Logs | `GetLogEvents` |
+| DynamoDB | `Scan` on `aft-request-metadata` (with `account_source: aft-dynamodb`) |
+| Organizations | `ListAccounts` (with `account_source: organizations`) |
+| STS | `GetCallerIdentity` |
+
+`sts:GetCallerIdentity` is not optional: every run resolves and prints the
+account it is about to act on, and a write is refused unless it lands in that
+same account.
+
+### Releasing
+
+One API, so the policy is small:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReleaseChangeOnCustomizationsPipelines",
+      "Effect": "Allow",
+      "Action": "codepipeline:StartPipelineExecution",
+      "Resource": "arn:aws:codepipeline:ap-northeast-1:123456789012:*-customizations-pipeline"
+    },
+    { "Effect": "Allow", "Action": "sts:GetCallerIdentity", "Resource": "*" }
+  ]
+}
+```
+
+The resource pattern is deliberate: it leaves out AFT's own two pipelines
+(`aft-account-request` and `aft-account-provisioning-customizations`), which
+this tool never targets anyway. No KMS grant is needed — the pipeline's
+artifact key is used by the pipeline, not by the caller starting it.
+
+Point `write_profile` at a role holding that policy and `profile` at the
+read-only one. The two must resolve to the same account; a write profile that
+lands anywhere else is refused before the confirmation prompt.
+
 ## License
 
 [MIT](LICENSE)
