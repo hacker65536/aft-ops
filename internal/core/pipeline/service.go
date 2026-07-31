@@ -127,7 +127,7 @@ type StatusOptions struct {
 // that is stale/forced/in-flight hits the API (through the batch engine), so
 // a repeated call within the TTL performs no requests. Per-item fetch
 // failures are reported in PipelineSummary.FetchError unless a cached value
-// can stand in — the accompanying StatusStats still counts them, so a failed
+// can stand in — the accompanying FetchStats still counts them, so a failed
 // refresh behind a stale value is never silent. The merged cache is written
 // back when anything was fetched or pruned.
 func (s *Service) Statuses(
@@ -136,7 +136,7 @@ func (s *Service) Statuses(
 	resolver *account.Resolver,
 	opts StatusOptions,
 	onProgress func(batch.Progress),
-) ([]model.PipelineSummary, model.StatusStats) {
+) ([]model.PipelineSummary, model.FetchStats) {
 	cached := map[string]StatusEntry{}
 	if !opts.RefreshAll {
 		if m, _, ok := cache.Get[map[string]StatusEntry](s.Cache, statusCacheKey, cache.Forever); ok {
@@ -170,7 +170,7 @@ func (s *Service) Statuses(
 		}
 	}
 
-	stats := model.StatusStats{TTL: opts.TTL}
+	stats := model.FetchStats{TTL: opts.TTL}
 	fetched := map[string]bool{}
 	fetchErrs := map[string]string{}
 	if len(toFetch) > 0 {

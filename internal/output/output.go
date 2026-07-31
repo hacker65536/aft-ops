@@ -184,17 +184,21 @@ func PipelineCounts(w io.Writer, items []model.PipelineSummary) {
 	fmt.Fprintln(w, line)
 }
 
-// StatusFreshness prints how fresh the listed statuses are: how many were
-// just refetched versus served from cache, the age of the oldest cached
-// entry, and how many refreshes failed (those keep serving their previous
-// value, so without this line the failure would be invisible). Companion to
-// PipelineCounts on stderr; the numbers come from the core, not from
-// guessing at timestamps.
-func StatusFreshness(w io.Writer, stats model.StatusStats) {
+// Freshness prints how fresh a cached fan-out's rows are: how many were just
+// refetched versus served from cache, the age of the oldest cached entry, and
+// how many refreshes failed (those keep serving their previous value, so
+// without this line the failure would be invisible). Companion to the counts
+// line on stderr; the numbers come from the core, not from guessing at
+// timestamps.
+//
+// what names the thing being counted ("statuses"). It is a parameter rather
+// than baked into the string because the sentence is about caching, not about
+// execution statuses, and a second cached fan-out should not have to reword it.
+func Freshness(w io.Writer, what string, stats model.FetchStats) {
 	if stats.Fetched == 0 && stats.FromCache == 0 && stats.Failed == 0 {
 		return
 	}
-	msg := fmt.Sprintf("statuses: %d refetched", stats.Fetched)
+	msg := fmt.Sprintf("%s: %d refetched", what, stats.Fetched)
 	if stats.FromCache > 0 {
 		msg += fmt.Sprintf(", %d from cache (oldest %s ago, ttl %s)",
 			stats.FromCache, humanDuration(time.Since(stats.Oldest)), humanDuration(stats.TTL))

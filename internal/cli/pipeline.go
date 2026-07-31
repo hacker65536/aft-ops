@@ -231,7 +231,7 @@ func newPipelineListCmd(app *App) *cobra.Command {
 				} else {
 					output.PipelineTable(os.Stdout, summaries, app.Color())
 					output.PipelineCounts(os.Stderr, summaries)
-					output.StatusFreshness(os.Stderr, stats)
+					output.Freshness(os.Stderr, "statuses", stats)
 				}
 
 				if failOnError {
@@ -599,21 +599,21 @@ func resolveBuildTargets(ctx context.Context, app *App, target, execID string) (
 // fetchSummaries is the shared inventory→statuses→join flow. It always
 // covers the full inventory, so the status cache is pruned of pipelines that
 // no longer exist.
-func fetchSummaries(ctx context.Context, app *App) ([]model.PipelineSummary, model.StatusStats, error) {
+func fetchSummaries(ctx context.Context, app *App) ([]model.PipelineSummary, model.FetchStats, error) {
 	svc, err := app.PipelineService(ctx)
 	if err != nil {
-		return nil, model.StatusStats{}, err
+		return nil, model.FetchStats{}, err
 	}
 	names, cachedAt, err := svc.Inventory(ctx, app.Refresh)
 	if err != nil {
-		return nil, model.StatusStats{}, err
+		return nil, model.FetchStats{}, err
 	}
 	if !cachedAt.IsZero() {
 		output.CacheNote(os.Stderr, "pipeline inventory", cachedAt)
 	}
 	resolver, err := app.Resolver(ctx)
 	if err != nil {
-		return nil, model.StatusStats{}, err
+		return nil, model.FetchStats{}, err
 	}
 
 	opts := app.statusOptions()
@@ -901,14 +901,14 @@ func releaseTargets(
 	base := summariesFromNames(names, resolver)
 	if len(q.statuses) > 0 {
 		fmt.Fprintln(os.Stderr, "refetching statuses so --status selects on current state…")
-		var stats model.StatusStats
+		var stats model.FetchStats
 		base, stats = svc.Statuses(ctx, names, resolver,
 			pipeline.StatusOptions{RefreshAll: true, Prune: true}, progressPrinter(app))
 		clearProgress(app)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		output.StatusFreshness(os.Stderr, stats)
+		output.Freshness(os.Stderr, "statuses", stats)
 	}
 
 	targets, err := selectTargets(base, q)

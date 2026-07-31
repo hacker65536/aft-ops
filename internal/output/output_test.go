@@ -137,17 +137,17 @@ func TestPipelineCounts(t *testing.T) {
 	}
 }
 
-// StatusFreshness reports the core's own numbers, including failed refreshes
+// Freshness reports the core's own numbers, including failed refreshes
 // (which keep serving a previous value and would otherwise be invisible).
-func TestStatusFreshness(t *testing.T) {
+func TestFreshness(t *testing.T) {
 	var b bytes.Buffer
-	StatusFreshness(&b, model.StatusStats{Fetched: 5})
+	Freshness(&b, "statuses", model.FetchStats{Fetched: 5})
 	if got := strings.TrimSpace(b.String()); got != "statuses: 5 refetched" {
 		t.Errorf("all-fresh line = %q", got)
 	}
 
 	b.Reset()
-	StatusFreshness(&b, model.StatusStats{
+	Freshness(&b, "statuses", model.FetchStats{
 		Fetched:   2,
 		FromCache: 180,
 		Failed:    1,
@@ -162,7 +162,7 @@ func TestStatusFreshness(t *testing.T) {
 	}
 
 	b.Reset()
-	StatusFreshness(&b, model.StatusStats{})
+	Freshness(&b, "statuses", model.FetchStats{})
 	if b.Len() != 0 {
 		t.Errorf("empty stats should print nothing, got %q", b.String())
 	}

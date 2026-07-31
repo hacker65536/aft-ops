@@ -328,11 +328,13 @@ func (p PipelineSummary) Status() Status {
 	return p.Latest.Status
 }
 
-// StatusStats reports where a batch of statuses came from, so the UI can
-// state freshness as fact instead of inferring it from timestamps.
-type StatusStats struct {
+// FetchStats reports where a batch of per-pipeline values came from, so the
+// UI can state freshness as fact instead of inferring it from timestamps.
+// It is not named after execution statuses because it is not about them: the
+// same accounting fits any cached fan-out over the pipeline inventory.
+type FetchStats struct {
 	Fetched   int           `json:"fetched"`    // refetched from the API this call
-	FromCache int           `json:"from_cache"` // served from the status cache
+	FromCache int           `json:"from_cache"` // served from the cache
 	Failed    int           `json:"failed"`     // refetch failed; previous value kept
 	Oldest    time.Time     `json:"oldest"`     // fetch time of the oldest cached entry
 	TTL       time.Duration `json:"ttl"`
