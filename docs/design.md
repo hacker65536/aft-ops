@@ -206,7 +206,7 @@ UI を知らないはずのコア層（`internal/core`）は `StartExecution` /
 「3 件の execution」）。これは §3 の「コア層は UI 非依存」の語彙面での帰結であり、
 `pipeline executions`（読み取り）と 1 文字違いの書き込みコマンドを作らないための制約でもある。
 
-### 4.4 Trigger ドリフト検出（F8・read-only）
+### 4.4 Trigger ドリフト検出（F10・read-only）
 
 ```
 1. pipeline 一覧（§4.1 と同じ inventory キャッシュ）+ account map
@@ -221,6 +221,13 @@ AFT の customizations パイプラインのテンプレートには **`trigger`
 アクションが `DetectChanges = false`** である。つまり実環境に付いている push trigger は
 すべて out-of-band であり、`aft-create-pipeline` が再実行される（AFT アップグレード時・
 CodeConnections 作り直し時にフリート全台で起きる）と消える。それを検知するのがこのフロー。
+
+**なぜ trigger が統制の一部なのか**は requirements.md の F10 に書いた。要点だけ言うと、
+AFT には plan → 承認 → apply のゲートが無く（上流 issue #153 が 2022 年から open）、
+それを customizations リポジトリ側の CI で補完すると **merge が apply の承認点**になる。
+その承認を実際の apply に繋いでいるのが push trigger であり、消えたときに起きるのは
+失敗ではなく**無反応**（merge しても何も走らず、CI は成功したまま）なので、
+検知する仕組みが無いと気づけない。
 
 設計上の要点:
 
@@ -341,7 +348,7 @@ aft-ops pipeline refresh [target...]  # 指定パイプラインの status だ�
 aft-ops pipeline show <target>   # F2: 詳細（ステージ/実行履歴）
 aft-ops pipeline executions <target>  # F2: 実行履歴一覧（alias: execs）
     [--limit 25] [--actions]     # --actions は各実行のアクション（CodeBuild id 付き）も展開
-aft-ops pipeline triggers        # F8: trigger ドリフト検出（alias: trig）。read-only
+aft-ops pipeline triggers        # F10: trigger ドリフト検出（alias: trig）。read-only
     --account <name|id|部分一致>
     --state ok|missing|drift|unknown|fetch-error  # カンマ区切り。未知の値は exit 2
     --fail-on-drift              # ok 以外が 1 件でもあれば exit 1（監視ジョブ向け）

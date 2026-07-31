@@ -115,6 +115,61 @@ AWS 公式ソリューション [AFT (Account Factory for Terraform)](https://gi
 - 共通系パイプラインの状態
 - AFT メタデータ（SSM パラメータ）の参照
 
+### F10. パイプライン trigger のドリフト検出【read-only】
+
+#### 背景: AFT には plan → 承認 → apply のゲートが無い
+
+AFT の customizations パイプラインは **Source → Global-Customizations(Apply) →
+Account-Customizations(Apply)** の 3 ステージだけで、CodeBuild の buildspec は
+`terraform apply -no-color --auto-approve` を直接実行する（AFT 1.21.1 のテンプレートで確認）。
+plan ステージも手動承認アクションも存在しない。IaC 適用としては一般的な
+「plan を人が読んでから apply」というパターンが、AFT には**構造として無い**。
+
+これは上流でも長年の要望であり、現時点で未提供:
+
+| issue / PR | 内容 | 状態 |
+|---|---|---|
+| [#153](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/153) | The Change Management - Approval Process（本命の tracking issue） | **2022-05 起票・open のまま** |
+| [#302](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/302) | account-request に plan + approval ステージを | #153 の重複として close |
+| [#481](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/481) | Add plan and approval stage for CodePipeline | 2024-08 起票・open |
+| [#624](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/pull/624) | apply-with-approval workflow type の PR | **unmerged で close** |
+| [#636](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/636) | fork ベースの承認ゲート PoC | 2026-07 公開。上流は現状 community contribution を受け付けない旨が明記されている |
+
+#### 補完策と、そこで trigger が担う役割
+
+このゲートは customizations リポジトリ側の CI（GitHub Actions 等）で補完できる。
+パイプラインの buildspec と同じ backend / provider 構成を組み立てて PR 上で
+`terraform plan` を実行し、結果をレビューして approve → merge する。
+**merge が apply の承認点**になり、merge をもってパイプラインが起動して apply が走る。
+
+この形が成立する前提が **merge で当該アカウントのパイプラインが自動起動すること**、
+すなわち push trigger である。ところが AFT のテンプレートは trigger を宣言せず、
+両ソースアクションは変更検知を切っている（`DetectChanges` / `PollForSourceChanges` = false）。
+したがって trigger は **out-of-band で付けるほかなく、`aft-create-pipeline` が再実行されると消える**
+（AFT アップグレード時・ソース接続の作り直し時にフリート全台で起きる）。
+
+trigger が消えたときに起きるのは**失敗ではなく無反応**である。PR で plan をレビューして
+merge しても apply が走らず、CI は成功し、パイプラインは前回の状態のまま何も言わない。
+気づく手段が無い。
+
+なお上流の設計思想では「customizations パイプラインは手動起動が前提」とされている（#153 の議論）。
+自動 trigger を足すというのは、その前提から外れて **PR の plan ゲートに承認点を移す**構成への
+乗り換えを意味する。つまりこの trigger は利便性ではなく**統制の一部**であり、
+その消失は統制の穴になる。ドリフト検出が要る理由はここにある。
+
+#### 要件
+
+- フリート全体について、各アカウントのパイプラインが**期待する push trigger を持つか**を
+  read-only で判定できること。有無だけでなく**内容の一致**（ブランチ・ソースアクション・
+  監視パス）まで見ること — trigger はあるが別ディレクトリを見ている状態は、無いのと同じく発火しない
+- **期待値はアカウント毎の設定として持たない。** AFT のメタデータから導出する。
+  数百件を設定ファイルに書かせない、かつ期待値が AFT 自身の記録からずれないこと
+- **判定できなかったものを「正常」として報告しないこと**（§6「silent failure 禁止」の一形態）
+- 定期実行で異常を検知できること（exit code でドリフトを表明する）
+- **trigger の設定（書き込み）は本ツールの範囲外。** 恒久化はパイプラインの作られ方そのものを
+  変える話（AFT 本体の fork 等）であり、外部からの reconcile ではない。両方を持つと
+  trigger の管理主体が二重になる
+
 ## 6. 非機能要件
 
 | 項目 | 要件 |
@@ -140,7 +195,7 @@ AWS 公式ソリューション [AFT (Account Factory for Terraform)](https://gi
 | Phase | 内容 |
 |---|---|
 | 1 | コア層 + CLI + TUI の骨格 / F1 状態一覧 / F3 単発 Release change / F6 キャッシュ / F7 アカウント解決 |
-| 2 | F2 詳細・CodeBuild(terraform)ログ / F4 逐次バッチ + 計測機構 / F5 安全ガード |
+| 2 | F2 詳細・CodeBuild(terraform)ログ / F4 逐次バッチ + 計測機構 / F5 安全ガード / F10 trigger ドリフト検出 |
 | 3 | F9 AFT リソース全般（account-request / Step Functions / 共通系パイプライン） |
 | 4 | OSS 公開整備（英語ドキュメント・CI/リリース・ライセンス） |
 
