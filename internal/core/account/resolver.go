@@ -69,6 +69,23 @@ func (r *Resolver) ByID(id string) *model.Account {
 	return nil
 }
 
+// HasCustomizationsNames reports whether any loaded account carries an
+// account_customizations_name.
+//
+// It exists for the trigger report, whose every expectation is derived from
+// that field: without it the whole fleet reads as Unknown, and the operator
+// needs to be told which of the two causes it is — an account source that
+// cannot supply the field at all, or an account cache written before the
+// field was carried, which one --refresh fixes.
+func (r *Resolver) HasCustomizationsNames() bool {
+	for _, a := range r.accounts {
+		if a.CustomizationsName != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Match returns accounts whose id equals, or name contains
 // (case-insensitive), the query. Exact name matches win over substring
 // matches.

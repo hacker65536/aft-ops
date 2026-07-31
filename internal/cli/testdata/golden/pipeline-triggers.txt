@@ -1,0 +1,50 @@
+$ aft-ops pipeline triggers
+exit 0
+--- stdout ---
+ACCOUNT NAME        ACCOUNT ID    TRIGGER  DETAIL
+payments-stg        100000000005  missing  no trigger configured
+payments-dev        100000000006  drift    file_paths: got payments/terraform/*.tf, want payments-dev/terraform/*.tf
+archive-legacy      100000000041  unknown  no account_customizations_name for this account
+analytics-dev       100000000010  ok       analytics-dev/terraform/*.tf
+analytics-prod      100000000009  ok       analytics-prod/terraform/*.tf
+api-gateway-prod    100000000024  ok       api-gateway-prod/terraform/*.tf
+api-gateway-stg     100000000025  ok       api-gateway-stg/terraform/*.tf
+backup-vault        100000000020  ok       backup-vault/terraform/*.tf
+batch-jobs          100000000029  ok       batch-jobs/terraform/*.tf
+billing-ops         100000000019  ok       billing-ops/terraform/*.tf
+compliance-reports  100000000042  ok       compliance-reports/terraform/*.tf
+crm-integration     100000000031  ok       crm-integration/terraform/*.tf
+data-lake-prod      100000000007  ok       data-lake-prod/terraform/*.tf
+data-lake-stg       100000000008  ok       data-lake-stg/terraform/*.tf
+dr-standby          100000000040  ok       dr-standby/terraform/*.tf
+edge-cdn            100000000023  ok       edge-cdn/terraform/*.tf
+identity-prod       100000000017  ok       identity-prod/terraform/*.tf
+identity-stg        100000000018  ok       identity-stg/terraform/*.tf
+log-archive         100000000013  ok       log-archive/terraform/*.tf
+ml-serving          100000000022  ok       ml-serving/terraform/*.tf
+ml-training         100000000021  ok       ml-training/terraform/*.tf
+mobile-backend      100000000033  ok       mobile-backend/terraform/*.tf
+network-hub-dev     100000000015  ok       network-hub-dev/terraform/*.tf
+network-hub-prod    100000000014  ok       network-hub-prod/terraform/*.tf
+notifications       100000000028  ok       notifications/terraform/*.tf
+partner-portal      100000000032  ok       partner-portal/terraform/*.tf
+payments-prod       100000000004  ok       payments-prod/terraform/*.tf
+perf-testing        100000000039  ok       perf-testing/terraform/*.tf
+platform-dev        100000000003  ok       platform-dev/terraform/*.tf
+platform-prod       100000000001  ok       platform-prod/terraform/*.tf
+platform-stg        100000000002  ok       platform-stg/terraform/*.tf
+qa-automation       100000000038  ok       qa-automation/terraform/*.tf
+reporting           100000000030  ok       reporting/terraform/*.tf
+sandbox-alice       100000000035  ok       sandbox-alice/terraform/*.tf
+sandbox-bob         100000000036  ok       sandbox-bob/terraform/*.tf
+sandbox-carol       100000000037  ok       sandbox-carol/terraform/*.tf
+search-dev          100000000027  ok       search-dev/terraform/*.tf
+search-prod         100000000026  ok       search-prod/terraform/*.tf
+security-audit      100000000011  ok       security-audit/terraform/*.tf
+security-tooling    100000000012  ok       security-tooling/terraform/*.tf
+shared-services     100000000016  ok       shared-services/terraform/*.tf
+web-frontend        100000000034  ok       web-frontend/terraform/*.tf
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=42 ok=39 missing=1 drift=1 unknown=1
+triggers: 42 refetched

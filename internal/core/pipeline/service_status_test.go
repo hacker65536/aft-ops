@@ -53,6 +53,11 @@ func (c *countingAPI) ListActionExecutions(context.Context, *codepipeline.ListAc
 	return &codepipeline.ListActionExecutionsOutput{}, nil
 }
 
+func (c *countingAPI) GetPipeline(context.Context, *codepipeline.GetPipelineInput,
+	...func(*codepipeline.Options)) (*codepipeline.GetPipelineOutput, error) {
+	return &codepipeline.GetPipelineOutput{}, nil
+}
+
 func (c *countingAPI) ListPipelineExecutions(_ context.Context, in *codepipeline.ListPipelineExecutionsInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.ListPipelineExecutionsOutput, error) {
 	c.mu.Lock()

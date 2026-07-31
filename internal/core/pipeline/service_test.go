@@ -48,6 +48,11 @@ func (m *mockAPI) GetPipelineState(context.Context, *codepipeline.GetPipelineSta
 	return m.state, nil
 }
 
+func (m *mockAPI) GetPipeline(context.Context, *codepipeline.GetPipelineInput,
+	...func(*codepipeline.Options)) (*codepipeline.GetPipelineOutput, error) {
+	return &codepipeline.GetPipelineOutput{}, nil
+}
+
 func (m *mockAPI) ListActionExecutions(_ context.Context, in *codepipeline.ListActionExecutionsInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.ListActionExecutionsOutput, error) {
 	m.actionCalls++

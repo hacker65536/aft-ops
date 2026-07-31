@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/hacker65536/aft-ops/internal/batch"
+	"github.com/hacker65536/aft-ops/internal/config"
 	"github.com/hacker65536/aft-ops/internal/core/account"
 	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/model"
@@ -32,6 +33,7 @@ func newPipelineCmd(app *App) *cobra.Command {
 		newPipelineListCmd(app),
 		newPipelineShowCmd(app),
 		newPipelineExecutionsCmd(app),
+		newPipelineTriggersCmd(app),
 		newPipelineRefreshCmd(app),
 		newPipelineLogsCmd(app),
 		newPipelineReleaseCmd(app),
@@ -111,6 +113,188 @@ action, status, duration and CodeBuild id), which is where the ids for
 	cmd.Flags().BoolVar(&actions, "actions", false,
 		"also list each execution's per-action runs (with CodeBuild ids)")
 	return cmd
+}
+
+// ---- pipeline triggers ----
+
+func newPipelineTriggersCmd(app *App) *cobra.Command {
+	var (
+		accountQuery string
+		stateFilter  []string
+		failOnDrift  bool
+	)
+	cmd := &cobra.Command{
+		Use:     "triggers",
+		Aliases: []string{"trig"},
+		Short:   "Report whether each pipeline carries its expected push trigger",
+		Long: `Compare every account pipeline's push trigger against the one its account
+calls for, and report the difference.
+
+The expectation is derived, not configured per account: AFT's metadata table
+records each account's account_customizations_name, and the file-path filter
+follows from it (trigger.file_path_template). A fleet of several hundred
+pipelines therefore needs no per-account setting, and the expectation cannot
+drift away from what AFT itself recorded.
+
+This matters because AFT's own terraform template declares no trigger at all,
+so any trigger is out-of-band: re-running aft-create-pipeline — which an AFT
+upgrade or a rebuilt CodeConnections connection does across the fleet —
+removes it. This command is how that becomes visible.
+
+Read-only: it never writes a pipeline definition.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			// Before any fetching, for the same reason --status is: an unknown
+			// value must not cost a fleet-wide sweep to reach "nothing
+			// selected", which reads exactly like "no drift anywhere".
+			states, err := parseTriggerStates(stateFilter)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+
+			svc, err := app.PipelineService(ctx)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			names, cachedAt, err := svc.Inventory(ctx, app.Refresh)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			if !cachedAt.IsZero() {
+				output.CacheNote(os.Stderr, "pipeline inventory", cachedAt)
+			}
+			resolver, err := app.Resolver(ctx)
+			if err != nil {
+				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+			}
+			warnNoCustomizationsNames(app, resolver)
+
+			opts := pipeline.TriggerOptions{
+				Policy:     app.triggerPolicy(),
+				TTL:        app.Cfg.Cache.TriggerTTL.D(),
+				RefreshAll: app.Refresh,
+				Prune:      true,
+			}
+			// The core caps this fan-out well below batch.concurrency, so
+			// forward the configured value only when the operator asked for a
+			// number on purpose. --concurrency is a persistent flag, hence
+			// Changed on the subcommand's own flag set.
+			if cmd.Flags().Changed("concurrency") {
+				opts.Concurrency = app.Cfg.Batch.Concurrency
+			}
+			summaries, stats := svc.Triggers(ctx, names, resolver, opts, progressPrinter(app))
+			clearProgress(app)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			summaries = filterTriggers(summaries, states, accountQuery)
+			model.SortTriggers(summaries)
+
+			if app.Format == output.FormatJSON {
+				if err := output.JSON(os.Stdout, summaries); err != nil {
+					return err
+				}
+			} else {
+				output.TriggerTable(os.Stdout, summaries, app.Color())
+				output.TriggerCounts(os.Stderr, summaries)
+				output.Freshness(os.Stderr, "triggers", stats)
+			}
+
+			if failOnDrift {
+				for _, t := range summaries {
+					if t.State != model.TriggerOK {
+						return domainErr()
+					}
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&accountQuery, "account", "a", "",
+		"filter by account id or name substring")
+	cmd.Flags().StringSliceVarP(&stateFilter, "state", "s", nil,
+		"filter by trigger state, comma-separated:\n"+triggerStateValues())
+	cmd.Flags().BoolVar(&failOnDrift, "fail-on-drift", false,
+		"exit 1 unless every listed pipeline carries its expected trigger")
+	return cmd
+}
+
+// triggerPolicy is the expectation the trigger report judges against.
+func (a *App) triggerPolicy() model.TriggerPolicy {
+	return model.TriggerPolicy{
+		SourceAction:     a.Cfg.Trigger.SourceAction,
+		Branch:           a.Cfg.Trigger.Branch,
+		FilePathTemplate: a.Cfg.Trigger.FilePathTemplate,
+	}
+}
+
+// warnNoCustomizationsNames explains a report that can only say "unknown".
+//
+// Every expectation comes from account_customizations_name, so when no account
+// carries one the whole fleet reads as unjudged — and the two causes need
+// different answers: an account source that has no such field, or an account
+// cache written before the field was carried.
+func warnNoCustomizationsNames(app *App, resolver *account.Resolver) {
+	if resolver == nil || resolver.HasCustomizationsNames() {
+		return
+	}
+	if app.Cfg.AccountSource != config.SourceAFTDynamoDB && app.Demo == nil {
+		fmt.Fprintf(os.Stderr,
+			"warning: account_source %q carries no account_customizations_name, "+
+				"so no expected trigger can be derived; set account_source: %s\n",
+			app.Cfg.AccountSource, config.SourceAFTDynamoDB)
+		return
+	}
+	fmt.Fprintln(os.Stderr,
+		"warning: no account carries an account_customizations_name; "+
+			"if the account cache predates this field, --refresh refills it")
+}
+
+// triggerStateValues lists the accepted --state values for the flag help.
+func triggerStateValues() string {
+	names := make([]string, len(model.TriggerStates))
+	for i, s := range model.TriggerStates {
+		names[i] = string(s)
+	}
+	return strings.Join(names, "|")
+}
+
+// parseTriggerStates validates a --state list and returns the canonical
+// spellings. See parseStatusFilters for why this runs before any fetching.
+func parseTriggerStates(values []string) ([]model.TriggerState, error) {
+	out := make([]model.TriggerState, 0, len(values))
+	for _, v := range values {
+		s, err := model.ParseTriggerState(v)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func filterTriggers(items []model.TriggerSummary, states []model.TriggerState, accountQuery string) []model.TriggerSummary {
+	stateSet := map[model.TriggerState]bool{}
+	for _, s := range states {
+		stateSet[s] = true
+	}
+	q := strings.ToLower(strings.TrimSpace(accountQuery))
+
+	var out []model.TriggerSummary
+	for _, it := range items {
+		if len(stateSet) > 0 && !stateSet[it.State] {
+			continue
+		}
+		if q != "" &&
+			!strings.Contains(strings.ToLower(it.AccountName), q) &&
+			!strings.Contains(it.AccountID, q) {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
 }
 
 // ---- pipeline refresh ----

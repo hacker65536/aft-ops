@@ -1,0 +1,5 @@
+$ aft-ops pipeline triggers --state drifted
+exit 2
+--- stdout ---
+--- stderr ---
+Error: invalid trigger state "drifted" (want ok|missing|drift|unknown|fetch-error)

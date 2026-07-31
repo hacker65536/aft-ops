@@ -1,0 +1,92 @@
+$ aft-ops pipeline triggers --account payments -o json
+exit 0
+--- stdout ---
+{
+  "schema_version": 2,
+  "generated_at": "<TIMESTAMP>",
+  "items": [
+    {
+      "pipeline_name": "100000000005-customizations-pipeline",
+      "account_id": "100000000005",
+      "account_name": "payments-stg",
+      "state": "missing",
+      "reasons": [
+        "no_trigger"
+      ],
+      "expected": {
+        "provider_type": "CodeStarSourceConnection",
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "payments-stg/terraform/*.tf"
+        ]
+      },
+      "fetched_at": "<TIMESTAMP>"
+    },
+    {
+      "pipeline_name": "100000000006-customizations-pipeline",
+      "account_id": "100000000006",
+      "account_name": "payments-dev",
+      "state": "drift",
+      "reasons": [
+        "file_paths"
+      ],
+      "expected": {
+        "provider_type": "CodeStarSourceConnection",
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "payments-dev/terraform/*.tf"
+        ]
+      },
+      "actual": [
+        {
+          "provider_type": "CodeStarSourceConnection",
+          "source_action": "aft-account-customizations",
+          "branches": [
+            "main"
+          ],
+          "file_paths": [
+            "payments/terraform/*.tf"
+          ]
+        }
+      ],
+      "fetched_at": "<TIMESTAMP>"
+    },
+    {
+      "pipeline_name": "100000000004-customizations-pipeline",
+      "account_id": "100000000004",
+      "account_name": "payments-prod",
+      "state": "ok",
+      "expected": {
+        "provider_type": "CodeStarSourceConnection",
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "payments-prod/terraform/*.tf"
+        ]
+      },
+      "actual": [
+        {
+          "provider_type": "CodeStarSourceConnection",
+          "source_action": "aft-account-customizations",
+          "branches": [
+            "main"
+          ],
+          "file_paths": [
+            "payments-prod/terraform/*.tf"
+          ]
+        }
+      ],
+      "fetched_at": "<TIMESTAMP>"
+    }
+  ]
+}
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)

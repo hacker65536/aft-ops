@@ -78,9 +78,10 @@ func (s *DynamoSource) Fetch(ctx context.Context) ([]model.Account, error) {
 
 func (i metadataItem) toAccount() model.Account {
 	acc := model.Account{
-		ID:    i.ID,
-		Name:  i.AccountName,
-		Email: i.Email,
+		ID:                 i.ID,
+		Name:               i.AccountName,
+		Email:              i.Email,
+		CustomizationsName: i.CustomizationsName,
 	}
 	if acc.Name == "" {
 		acc.Name = i.CustomizationsName

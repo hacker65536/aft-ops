@@ -54,6 +54,16 @@ var goldenCases = []struct {
 	{"pipeline-show-partial-name", []string{"pipeline", "show", "payments"}},
 	{"pipeline-show-unknown", []string{"pipeline", "show", "no-such-account"}},
 	{"pipeline-executions", []string{"pipeline", "executions", "payments-stg", "--limit", "3", "--actions"}},
+	// The trigger report's four fixture states — ok, missing, drift, and the
+	// unknown an account with no customizations name produces.
+	{"pipeline-triggers", []string{"pipeline", "triggers"}},
+	{"pipeline-triggers-account", []string{"pipeline", "triggers", "--account", "payments"}},
+	{"pipeline-triggers-json", []string{"pipeline", "triggers", "--account", "payments", "-o", "json"}},
+	{"pipeline-triggers-state", []string{"pipeline", "triggers", "--state", "missing,drift"}},
+	{"pipeline-triggers-state-typo", []string{"pipeline", "triggers", "--state", "drifted"}},
+	// A drift check is only worth automating if it can fail the job.
+	{"pipeline-triggers-fail-on-drift", []string{"pipeline", "triggers", "--account", "payments", "--fail-on-drift"}},
+	{"pipeline-triggers-fail-on-drift-clean", []string{"pipeline", "triggers", "--account", "platform", "--fail-on-drift"}},
 	{"pipeline-logs", []string{"pipeline", "logs", "payments-stg"}},
 	{"pipeline-release-dry-run", []string{"pipeline", "release", "payments-stg", "--dry-run"}},
 	{"pipeline-release-status-typo", []string{"pipeline", "release", "--status", "Faild", "--dry-run"}},

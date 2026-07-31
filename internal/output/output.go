@@ -191,9 +191,9 @@ func PipelineCounts(w io.Writer, items []model.PipelineSummary) {
 // line on stderr; the numbers come from the core, not from guessing at
 // timestamps.
 //
-// what names the thing being counted ("statuses"). It is a parameter rather
-// than baked into the string because the sentence is about caching, not about
-// execution statuses, and a second cached fan-out should not have to reword it.
+// what names the thing being counted ("statuses", "triggers"). Both cached
+// fan-outs report through here, and a drift report in particular has to say
+// out loud when its verdict came from cache.
 func Freshness(w io.Writer, what string, stats model.FetchStats) {
 	if stats.Fetched == 0 && stats.FromCache == 0 && stats.Failed == 0 {
 		return
@@ -207,6 +207,114 @@ func Freshness(w io.Writer, what string, stats model.FetchStats) {
 		msg += fmt.Sprintf(" · %d refetch(es) failed, previous values kept", stats.Failed)
 	}
 	fmt.Fprintln(w, msg)
+}
+
+// TriggerTable renders `pipeline triggers` rows.
+func TriggerTable(w io.Writer, items []model.TriggerSummary, color bool) {
+	var tw tableWriter
+	tw.row("ACCOUNT NAME", "ACCOUNT ID", "TRIGGER", "DETAIL")
+	for _, t := range items {
+		name := t.AccountName
+		if name == "" {
+			name = "-"
+		}
+		tw.row(name, t.AccountID, styleTriggerState(t.State, color), triggerDetail(t))
+	}
+	tw.flush(w)
+}
+
+// styleTriggerState colors a verdict by what it asks of the reader: drift is
+// a discrepancy to look at, a missing trigger means the pipeline is not being
+// started by pushes at all, and unknown is the report admitting it could not
+// judge — dim, because it is not a finding about the pipeline.
+func styleTriggerState(s model.TriggerState, color bool) string {
+	if !color {
+		return string(s)
+	}
+	switch s {
+	case model.TriggerOK:
+		return styleSucceeded.Render(string(s))
+	case model.TriggerDrift:
+		return styleInFlight.Render(string(s))
+	case model.TriggerMissing, model.TriggerFetchError:
+		return styleFailed.Render(string(s))
+	default:
+		return styleDim.Render(string(s))
+	}
+}
+
+// triggerDetail is the one line that says what to do about a row: the file
+// path being watched when all is well, and what differs when it is not.
+func triggerDetail(t model.TriggerSummary) string {
+	switch t.State {
+	case model.TriggerOK:
+		return strings.Join(t.Expected.FilePaths, ", ")
+	case model.TriggerMissing:
+		return "no trigger configured"
+	case model.TriggerUnknown:
+		return "no account_customizations_name for this account"
+	case model.TriggerFetchError:
+		return truncate(t.FetchError, 60)
+	}
+	// Drift: name every reason, but spell out only the first difference. The
+	// full before/after of each one is in the JSON output; a table row that
+	// wrapped over three lines would stop the table being scannable, which is
+	// the only thing it is better at than the JSON.
+	parts := make([]string, 0, 2)
+	parts = append(parts, strings.Join(t.Reasons, ","))
+	if d := triggerDiff(t); d != "" {
+		parts = append(parts, d)
+	}
+	return truncate(strings.Join(parts, ": "), 80)
+}
+
+// triggerDiff renders the first comparable difference as "got X, want Y".
+func triggerDiff(t model.TriggerSummary) string {
+	if t.Expected == nil || len(t.Actual) == 0 {
+		return ""
+	}
+	got, want := t.Actual[0], *t.Expected
+	for _, reason := range t.Reasons {
+		switch reason {
+		case model.ReasonFilePaths:
+			return diffLine(got.FilePaths, want.FilePaths)
+		case model.ReasonBranches:
+			return diffLine(got.Branches, want.Branches)
+		case model.ReasonSourceAction:
+			return diffLine([]string{got.SourceAction}, []string{want.SourceAction})
+		case model.ReasonProviderType:
+			return diffLine([]string{got.ProviderType}, []string{want.ProviderType})
+		}
+	}
+	return ""
+}
+
+func diffLine(got, want []string) string {
+	return fmt.Sprintf("got %s, want %s", joinOrDash(got), joinOrDash(want))
+}
+
+func joinOrDash(v []string) string {
+	s := strings.Join(v, ",")
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// TriggerCounts prints the per-state tally (stderr companion of the table).
+func TriggerCounts(w io.Writer, items []model.TriggerSummary) {
+	counts := model.TriggerCounts(items)
+	var parts []string
+	for _, s := range model.TriggerStates {
+		if counts[s] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", s, counts[s]))
+		}
+	}
+	line := fmt.Sprintf("total=%d", len(items))
+	if len(parts) > 0 {
+		line += " " + strings.Join(parts, " ")
+	}
+	fmt.Fprintln(w, line)
 }
 
 // ReleaseTable renders release results.

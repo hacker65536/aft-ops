@@ -206,6 +206,41 @@ UI を知らないはずのコア層（`internal/core`）は `StartExecution` /
 「3 件の execution」）。これは §3 の「コア層は UI 非依存」の語彙面での帰結であり、
 `pipeline executions`（読み取り）と 1 文字違いの書き込みコマンドを作らないための制約でもある。
 
+### 4.4 Trigger ドリフト検出（F8・read-only）
+
+```
+1. pipeline 一覧（§4.1 と同じ inventory キャッシュ）+ account map
+2. trigger cache を参照し、TTL 内のエントリはキャッシュから供給。
+   残りだけ Batch Engine で GetPipeline → triggers を正規化
+3. 期待値 = TriggerPolicy.Expect(account_customizations_name) を毎回その場で計算し、
+   観測値と突き合わせて state（ok/missing/drift/unknown/fetch-error）と reason slug を出す
+4. renderer が table / json で出力。件数と鮮度を stderr に出す（§4.1 と同じ FetchStats）
+```
+
+AFT の customizations パイプラインのテンプレートには **`trigger` ブロックが無く、両ソース
+アクションが `DetectChanges = false`** である。つまり実環境に付いている push trigger は
+すべて out-of-band であり、`aft-create-pipeline` が再実行される（AFT アップグレード時・
+CodeConnections 作り直し時にフリート全台で起きる）と消える。それを検知するのがこのフロー。
+
+設計上の要点:
+
+- **期待値はアカウントごとに設定しない。** AFT が `aft-request-metadata` に記録している
+  `account_customizations_name` から `trigger.file_path_template` で導出する。数百件の
+  フリートが設定 3 行で覆え、かつ期待値が AFT の記録からずれようがない。
+  実測（193 本）で `filePaths` と `account_customizations_name` の突合はズレ 0・重複 0
+- **期待値を導出できないパイプラインは `unknown` であって `ok` ではない。** 「判定できなかった」
+  と「正しかった」は逆の答えで、混ぜるとレポートが自分の入力の欠落を健康証明として出す
+- **キャッシュするのは観測した trigger だけで、判定結果はしない。** policy を変えたり
+  accounts を `--refresh` したりしたときに、パイプライン定義を取り直さずに再判定できる
+- **並列度はコア層で 3 に制限する**（`triggerConcurrencyCap`）。`GetPipeline` は読み取り系の
+  中では重く、実測で **6 並列だと 195 本中 11 本が `ThrottlingException`（SDK 内部リトライ込み）・
+  3 並列では 0 件**だった。`batch.concurrency` は `ListPipelineExecutions` に対して調整された
+  値なので、そのまま使うとこのコマンドだけが黙って壊れる。`--concurrency` を明示的に
+  渡したときだけ上限を外す（操作者が意図してその数を要求している）
+- **書き込み（trigger の設定）は実装しない。** 恒久化はパイプラインの作られ方そのものを
+  変える話（AFT 本体の fork 等）であり、外から reconcile するものではない。両方持つと
+  trigger の管理主体が二重になる
+
 ## 5. 逐次バッチエンジン（internal/batch）
 
 要件 F4 の中核。「チャンク逐次 × チャンク内並列」+ レート制御 + 計測。
@@ -259,6 +294,7 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 | account map（ID⇔名前⇔email） | 下記 7.1 | 24h |
 | pipeline 存在一覧 | ListPipelines | 6h |
 | 実行ステータス（per-entry） | ListPipelineExecutions | 10m（`status_ttl`）。実行中は常に再取得 |
+| pipeline trigger（per-entry） | GetPipeline | 1h（`trigger_ttl`）。定義は書き換えられたときしか変わらない |
 
 セッション内メモリ memo（TUI 起動中のみ・ディスクに書かない）:
 
@@ -305,6 +341,10 @@ aft-ops pipeline refresh [target...]  # 指定パイプラインの status だ�
 aft-ops pipeline show <target>   # F2: 詳細（ステージ/実行履歴）
 aft-ops pipeline executions <target>  # F2: 実行履歴一覧（alias: execs）
     [--limit 25] [--actions]     # --actions は各実行のアクション（CodeBuild id 付き）も展開
+aft-ops pipeline triggers        # F8: trigger ドリフト検出（alias: trig）。read-only
+    --account <name|id|部分一致>
+    --state ok|missing|drift|unknown|fetch-error  # カンマ区切り。未知の値は exit 2
+    --fail-on-drift              # ok 以外が 1 件でもあれば exit 1（監視ジョブ向け）
 aft-ops pipeline logs <target>   # F2: CodeBuild/terraform ログ
     [--execution <id>] [--build <id>] [--raw|--summary]
     # 既定（フラグ無し）= 現在の state の失敗アクション 1 本
@@ -545,11 +585,17 @@ cache:
   account_ttl: 24h
   pipeline_ttl: 6h
   status_ttl: 10m      # 実行ステータスのキャッシュ TTL（0 で無効化＝毎回 fan-out）
+  trigger_ttl: 1h      # pipeline trigger のキャッシュ TTL（0 で無効化＝毎回 fan-out）
   executions_ttl: 15m  # 実行履歴（TUI executions 画面）のセッション内 memo TTL（0 で無効化）
 
 release:
   max_targets: 50
   skip_in_progress: true
+
+trigger:               # §4.4。アカウントごとの設定は持たず metadata から導出する
+  source_action: aft-account-customizations
+  branch: main
+  file_path_template: "{customizations_name}/terraform/*.tf"
 
 tui:
   poll_interval: 30s   # TUI の in-flight 自動再取得間隔 / `pipeline list --watch` の既定間隔

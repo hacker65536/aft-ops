@@ -358,8 +358,8 @@ func TestEveryConfigKeyIsSettableFromTheEnvironment(t *testing.T) {
 // Every key means every key: a count that drops is a field that stopped being
 // reachable, which is exactly the drift the derived names exist to prevent.
 func TestConfigKeyCount(t *testing.T) {
-	if got := len(configPaths(t)); got != 22 {
-		t.Errorf("walked %d config keys, want 22 — if a field was added or "+
+	if got := len(configPaths(t)); got != 26 {
+		t.Errorf("walked %d config keys, want 26 — if a field was added or "+
 			"removed on purpose, update this count and the README table", got)
 	}
 }

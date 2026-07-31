@@ -162,7 +162,7 @@ func TestFreshness(t *testing.T) {
 	}
 
 	b.Reset()
-	Freshness(&b, "statuses", model.FetchStats{})
+	Freshness(&b, "triggers", model.FetchStats{})
 	if b.Len() != 0 {
 		t.Errorf("empty stats should print nothing, got %q", b.String())
 	}

@@ -1,0 +1,10 @@
+$ aft-ops pipeline triggers --state missing,drift
+exit 0
+--- stdout ---
+ACCOUNT NAME  ACCOUNT ID    TRIGGER  DETAIL
+payments-stg  100000000005  missing  no trigger configured
+payments-dev  100000000006  drift    file_paths: got payments/terraform/*.tf, want payments-dev/terraform/*.tf
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=2 missing=1 drift=1
+triggers: 42 refetched

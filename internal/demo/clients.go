@@ -183,6 +183,45 @@ func (c *PipelineClient) GetPipelineState(ctx context.Context,
 	return out, nil
 }
 
+// GetPipeline serves the pipeline definition. The fakes only fill in what the
+// tool actually reads — the name and the triggers — because a fixture holding
+// a full stage/action declaration would be a second copy of what the
+// executions already describe, free to disagree with them.
+func (c *PipelineClient) GetPipeline(ctx context.Context,
+	in *codepipeline.GetPipelineInput,
+	_ ...func(*codepipeline.Options)) (*codepipeline.GetPipelineOutput, error) {
+	if err := c.env.tick(ctx); err != nil {
+		return nil, err
+	}
+	e := c.env
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	name := aws.ToString(in.Name)
+	i, ok := e.pipelineByName(name)
+	if !ok {
+		return nil, notFound(name)
+	}
+	decl := &cptypes.PipelineDeclaration{Name: aws.String(name)}
+	if t := e.fx.Pipelines[i].Trigger; t != nil {
+		provider := t.ProviderType
+		if provider == "" {
+			provider = model.TriggerProviderType
+		}
+		decl.Triggers = []cptypes.PipelineTriggerDeclaration{{
+			ProviderType: cptypes.PipelineTriggerProviderType(provider),
+			GitConfiguration: &cptypes.GitConfiguration{
+				SourceActionName: aws.String(t.SourceAction),
+				Push: []cptypes.GitPushFilter{{
+					Branches:  &cptypes.GitBranchFilterCriteria{Includes: t.Branches},
+					FilePaths: &cptypes.GitFilePathFilterCriteria{Includes: t.FilePaths},
+				}},
+			},
+		}}
+	}
+	return &codepipeline.GetPipelineOutput{Pipeline: decl}, nil
+}
+
 func (c *PipelineClient) ListActionExecutions(ctx context.Context,
 	in *codepipeline.ListActionExecutionsInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.ListActionExecutionsOutput, error) {

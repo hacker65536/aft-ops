@@ -1,7 +1,7 @@
 // Package pipeline implements the core services around AFT per-account
-// customizations pipelines: inventory, latest-status fan-out, and release
-// (StartPipelineExecution). Both the CLI and the TUI call this package —
-// guards and instrumentation live here, not in the UIs.
+// customizations pipelines: inventory, latest-status fan-out, trigger drift
+// detection, and release (StartPipelineExecution). Both the CLI and the TUI
+// call this package — guards and instrumentation live here, not in the UIs.
 package pipeline
 
 import (
@@ -37,6 +37,8 @@ type API interface {
 		opts ...func(*codepipeline.Options)) (*codepipeline.ListPipelineExecutionsOutput, error)
 	GetPipelineState(ctx context.Context, in *codepipeline.GetPipelineStateInput,
 		opts ...func(*codepipeline.Options)) (*codepipeline.GetPipelineStateOutput, error)
+	GetPipeline(ctx context.Context, in *codepipeline.GetPipelineInput,
+		opts ...func(*codepipeline.Options)) (*codepipeline.GetPipelineOutput, error)
 	ListActionExecutions(ctx context.Context, in *codepipeline.ListActionExecutionsInput,
 		opts ...func(*codepipeline.Options)) (*codepipeline.ListActionExecutionsOutput, error)
 }

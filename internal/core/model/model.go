@@ -97,6 +97,13 @@ type Account struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Email string `json:"email,omitempty"`
+	// CustomizationsName is AFT's account_customizations_name: the directory
+	// in the account-customizations repository that holds this account's
+	// terraform. It is what a trigger's file-path filter is derived from
+	// (TriggerPolicy.Expect), so it is carried rather than only used as a
+	// fallback for Name. Only the AFT metadata source can supply it —
+	// Organizations and static files have no such concept.
+	CustomizationsName string `json:"customizations_name,omitempty"`
 }
 
 // Execution is a single pipeline execution.
@@ -330,8 +337,8 @@ func (p PipelineSummary) Status() Status {
 
 // FetchStats reports where a batch of per-pipeline values came from, so the
 // UI can state freshness as fact instead of inferring it from timestamps.
-// It is not named after execution statuses because it is not about them: the
-// same accounting fits any cached fan-out over the pipeline inventory.
+// Both cached fan-outs report through it — execution statuses and pipeline
+// triggers — which is why it is not named after either.
 type FetchStats struct {
 	Fetched   int           `json:"fetched"`    // refetched from the API this call
 	FromCache int           `json:"from_cache"` // served from the cache

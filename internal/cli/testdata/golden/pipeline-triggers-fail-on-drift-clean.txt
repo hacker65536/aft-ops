@@ -1,0 +1,11 @@
+$ aft-ops pipeline triggers --account platform --fail-on-drift
+exit 0
+--- stdout ---
+ACCOUNT NAME   ACCOUNT ID    TRIGGER  DETAIL
+platform-dev   100000000003  ok       platform-dev/terraform/*.tf
+platform-prod  100000000001  ok       platform-prod/terraform/*.tf
+platform-stg   100000000002  ok       platform-stg/terraform/*.tf
+--- stderr ---
+aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
+total=3 ok=3
+triggers: 42 refetched

@@ -97,8 +97,22 @@ type ReleaseSpec struct {
 
 // Pipeline is one account's customizations pipeline.
 type Pipeline struct {
-	AccountID  string      `json:"account_id"`
+	AccountID string `json:"account_id"`
+	// Trigger is the push trigger the pipeline declares. Absent means the
+	// pipeline has none — which is a state worth demonstrating, since it is
+	// what `pipeline triggers` reports after AFT rewrites a pipeline.
+	Trigger    *Trigger    `json:"trigger,omitempty"`
 	Executions []Execution `json:"executions"` // newest first
+}
+
+// Trigger is a fixture pipeline's push trigger. It is written out in full
+// rather than derived from the account so that a fixture can hold a drifted
+// one (a file path pointing at the wrong directory) next to correct ones.
+type Trigger struct {
+	ProviderType string   `json:"provider_type,omitempty"` // default CodeStarSourceConnection
+	SourceAction string   `json:"source_action"`
+	Branches     []string `json:"branches"`
+	FilePaths    []string `json:"file_paths"`
 }
 
 // Name returns the CodePipeline name AFT would give this account.

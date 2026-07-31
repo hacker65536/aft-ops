@@ -65,6 +65,7 @@ type Config struct {
 	Batch   Batch   `yaml:"batch"`
 	Cache   Cache   `yaml:"cache"`
 	Release Release `yaml:"release"`
+	Trigger Trigger `yaml:"trigger"`
 	TUI     TUI     `yaml:"tui"`
 	Metrics Metrics `yaml:"metrics"`
 }
@@ -84,6 +85,13 @@ type Cache struct {
 	// refetch. In-flight statuses are always refetched regardless (see
 	// pipeline.StatusOptions). 0 disables status caching (always fan out).
 	StatusTTL Duration `yaml:"status_ttl"`
+	// TriggerTTL bounds how long a cached pipeline trigger is served before
+	// `pipeline triggers` refetches it. Pipeline definitions change only when
+	// something rewrites them (aft-create-pipeline, an out-of-band update), so
+	// a generous TTL costs little — but this is a drift report, and a cached
+	// answer is only honest because the freshness line says so. 0 disables the
+	// cache (always fan out).
+	TriggerTTL Duration `yaml:"trigger_ttl"`
 	// ExecutionsTTL bounds how long one pipeline's cached execution history
 	// (the TUI executions screen) is served before a refetch. A history whose
 	// head execution is in-flight is always refetched, and the screen's r key
@@ -95,6 +103,21 @@ type Cache struct {
 type Release struct {
 	MaxTargets     int  `yaml:"max_targets"`
 	SkipInProgress bool `yaml:"skip_in_progress"`
+}
+
+// Trigger describes the push trigger an AFT account customizations pipeline
+// is expected to carry, which `pipeline triggers` compares reality against.
+//
+// There is no per-account setting here on purpose. FilePathTemplate is
+// expanded with the account's own account_customizations_name from AFT's
+// metadata table, so a fleet of several hundred pipelines is covered by three
+// lines instead of several hundred — and the expectation cannot drift away
+// from what AFT itself recorded. The defaults are the shape AFT's
+// customizations repository layout implies.
+type Trigger struct {
+	SourceAction     string `yaml:"source_action"`
+	Branch           string `yaml:"branch"`
+	FilePathTemplate string `yaml:"file_path_template"`
 }
 
 type TUI struct {
@@ -126,11 +149,17 @@ func Default() Config {
 			AccountTTL:    Duration(24 * time.Hour),
 			PipelineTTL:   Duration(6 * time.Hour),
 			StatusTTL:     Duration(10 * time.Minute),
+			TriggerTTL:    Duration(time.Hour),
 			ExecutionsTTL: Duration(15 * time.Minute),
 		},
 		Release: Release{
 			MaxTargets:     50,
 			SkipInProgress: true,
+		},
+		Trigger: Trigger{
+			SourceAction:     "aft-account-customizations",
+			Branch:           "main",
+			FilePathTemplate: "{customizations_name}/terraform/*.tf",
 		},
 		TUI:     TUI{PollInterval: Duration(30 * time.Second)},
 		Metrics: Metrics{Enabled: true, Dir: DefaultMetricsDir(), KeepRuns: 100},
@@ -197,6 +226,19 @@ func (c *Config) Validate() error {
 	}
 	if c.Batch.Concurrency < 1 {
 		return fmt.Errorf("batch.concurrency must be >= 1 (got %d)", c.Batch.Concurrency)
+	}
+	// An empty trigger key cannot be judged against: it makes every pipeline
+	// report "unknown", which reads as a broken tool rather than as the
+	// unset value it is. All three default to non-empty, so reaching this
+	// means someone blanked one out.
+	for _, kv := range []struct{ key, value string }{
+		{"trigger.source_action", c.Trigger.SourceAction},
+		{"trigger.branch", c.Trigger.Branch},
+		{"trigger.file_path_template", c.Trigger.FilePathTemplate},
+	} {
+		if strings.TrimSpace(kv.value) == "" {
+			return fmt.Errorf("%s must not be empty", kv.key)
+		}
 	}
 	return nil
 }

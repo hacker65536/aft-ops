@@ -18,202 +18,242 @@
     {
       "id": "100000000001",
       "name": "platform-prod",
-      "email": "aws+platform-prod@example.com"
+      "email": "aws+platform-prod@example.com",
+      "customizations_name": "platform-prod"
     },
     {
       "id": "100000000002",
       "name": "platform-stg",
-      "email": "aws+platform-stg@example.com"
+      "email": "aws+platform-stg@example.com",
+      "customizations_name": "platform-stg"
     },
     {
       "id": "100000000003",
       "name": "platform-dev",
-      "email": "aws+platform-dev@example.com"
+      "email": "aws+platform-dev@example.com",
+      "customizations_name": "platform-dev"
     },
     {
       "id": "100000000004",
       "name": "payments-prod",
-      "email": "aws+payments-prod@example.com"
+      "email": "aws+payments-prod@example.com",
+      "customizations_name": "payments-prod"
     },
     {
       "id": "100000000005",
       "name": "payments-stg",
-      "email": "aws+payments-stg@example.com"
+      "email": "aws+payments-stg@example.com",
+      "customizations_name": "payments-stg"
     },
     {
       "id": "100000000006",
       "name": "payments-dev",
-      "email": "aws+payments-dev@example.com"
+      "email": "aws+payments-dev@example.com",
+      "customizations_name": "payments-dev"
     },
     {
       "id": "100000000007",
       "name": "data-lake-prod",
-      "email": "aws+data-lake-prod@example.com"
+      "email": "aws+data-lake-prod@example.com",
+      "customizations_name": "data-lake-prod"
     },
     {
       "id": "100000000008",
       "name": "data-lake-stg",
-      "email": "aws+data-lake-stg@example.com"
+      "email": "aws+data-lake-stg@example.com",
+      "customizations_name": "data-lake-stg"
     },
     {
       "id": "100000000009",
       "name": "analytics-prod",
-      "email": "aws+analytics-prod@example.com"
+      "email": "aws+analytics-prod@example.com",
+      "customizations_name": "analytics-prod"
     },
     {
       "id": "100000000010",
       "name": "analytics-dev",
-      "email": "aws+analytics-dev@example.com"
+      "email": "aws+analytics-dev@example.com",
+      "customizations_name": "analytics-dev"
     },
     {
       "id": "100000000011",
       "name": "security-audit",
-      "email": "aws+security-audit@example.com"
+      "email": "aws+security-audit@example.com",
+      "customizations_name": "security-audit"
     },
     {
       "id": "100000000012",
       "name": "security-tooling",
-      "email": "aws+security-tooling@example.com"
+      "email": "aws+security-tooling@example.com",
+      "customizations_name": "security-tooling"
     },
     {
       "id": "100000000013",
       "name": "log-archive",
-      "email": "aws+log-archive@example.com"
+      "email": "aws+log-archive@example.com",
+      "customizations_name": "log-archive"
     },
     {
       "id": "100000000014",
       "name": "network-hub-prod",
-      "email": "aws+network-hub-prod@example.com"
+      "email": "aws+network-hub-prod@example.com",
+      "customizations_name": "network-hub-prod"
     },
     {
       "id": "100000000015",
       "name": "network-hub-dev",
-      "email": "aws+network-hub-dev@example.com"
+      "email": "aws+network-hub-dev@example.com",
+      "customizations_name": "network-hub-dev"
     },
     {
       "id": "100000000016",
       "name": "shared-services",
-      "email": "aws+shared-services@example.com"
+      "email": "aws+shared-services@example.com",
+      "customizations_name": "shared-services"
     },
     {
       "id": "100000000017",
       "name": "identity-prod",
-      "email": "aws+identity-prod@example.com"
+      "email": "aws+identity-prod@example.com",
+      "customizations_name": "identity-prod"
     },
     {
       "id": "100000000018",
       "name": "identity-stg",
-      "email": "aws+identity-stg@example.com"
+      "email": "aws+identity-stg@example.com",
+      "customizations_name": "identity-stg"
     },
     {
       "id": "100000000019",
       "name": "billing-ops",
-      "email": "aws+billing-ops@example.com"
+      "email": "aws+billing-ops@example.com",
+      "customizations_name": "billing-ops"
     },
     {
       "id": "100000000020",
       "name": "backup-vault",
-      "email": "aws+backup-vault@example.com"
+      "email": "aws+backup-vault@example.com",
+      "customizations_name": "backup-vault"
     },
     {
       "id": "100000000021",
       "name": "ml-training",
-      "email": "aws+ml-training@example.com"
+      "email": "aws+ml-training@example.com",
+      "customizations_name": "ml-training"
     },
     {
       "id": "100000000022",
       "name": "ml-serving",
-      "email": "aws+ml-serving@example.com"
+      "email": "aws+ml-serving@example.com",
+      "customizations_name": "ml-serving"
     },
     {
       "id": "100000000023",
       "name": "edge-cdn",
-      "email": "aws+edge-cdn@example.com"
+      "email": "aws+edge-cdn@example.com",
+      "customizations_name": "edge-cdn"
     },
     {
       "id": "100000000024",
       "name": "api-gateway-prod",
-      "email": "aws+api-gateway-prod@example.com"
+      "email": "aws+api-gateway-prod@example.com",
+      "customizations_name": "api-gateway-prod"
     },
     {
       "id": "100000000025",
       "name": "api-gateway-stg",
-      "email": "aws+api-gateway-stg@example.com"
+      "email": "aws+api-gateway-stg@example.com",
+      "customizations_name": "api-gateway-stg"
     },
     {
       "id": "100000000026",
       "name": "search-prod",
-      "email": "aws+search-prod@example.com"
+      "email": "aws+search-prod@example.com",
+      "customizations_name": "search-prod"
     },
     {
       "id": "100000000027",
       "name": "search-dev",
-      "email": "aws+search-dev@example.com"
+      "email": "aws+search-dev@example.com",
+      "customizations_name": "search-dev"
     },
     {
       "id": "100000000028",
       "name": "notifications",
-      "email": "aws+notifications@example.com"
+      "email": "aws+notifications@example.com",
+      "customizations_name": "notifications"
     },
     {
       "id": "100000000029",
       "name": "batch-jobs",
-      "email": "aws+batch-jobs@example.com"
+      "email": "aws+batch-jobs@example.com",
+      "customizations_name": "batch-jobs"
     },
     {
       "id": "100000000030",
       "name": "reporting",
-      "email": "aws+reporting@example.com"
+      "email": "aws+reporting@example.com",
+      "customizations_name": "reporting"
     },
     {
       "id": "100000000031",
       "name": "crm-integration",
-      "email": "aws+crm-integration@example.com"
+      "email": "aws+crm-integration@example.com",
+      "customizations_name": "crm-integration"
     },
     {
       "id": "100000000032",
       "name": "partner-portal",
-      "email": "aws+partner-portal@example.com"
+      "email": "aws+partner-portal@example.com",
+      "customizations_name": "partner-portal"
     },
     {
       "id": "100000000033",
       "name": "mobile-backend",
-      "email": "aws+mobile-backend@example.com"
+      "email": "aws+mobile-backend@example.com",
+      "customizations_name": "mobile-backend"
     },
     {
       "id": "100000000034",
       "name": "web-frontend",
-      "email": "aws+web-frontend@example.com"
+      "email": "aws+web-frontend@example.com",
+      "customizations_name": "web-frontend"
     },
     {
       "id": "100000000035",
       "name": "sandbox-alice",
-      "email": "aws+sandbox-alice@example.com"
+      "email": "aws+sandbox-alice@example.com",
+      "customizations_name": "sandbox-alice"
     },
     {
       "id": "100000000036",
       "name": "sandbox-bob",
-      "email": "aws+sandbox-bob@example.com"
+      "email": "aws+sandbox-bob@example.com",
+      "customizations_name": "sandbox-bob"
     },
     {
       "id": "100000000037",
       "name": "sandbox-carol",
-      "email": "aws+sandbox-carol@example.com"
+      "email": "aws+sandbox-carol@example.com",
+      "customizations_name": "sandbox-carol"
     },
     {
       "id": "100000000038",
       "name": "qa-automation",
-      "email": "aws+qa-automation@example.com"
+      "email": "aws+qa-automation@example.com",
+      "customizations_name": "qa-automation"
     },
     {
       "id": "100000000039",
       "name": "perf-testing",
-      "email": "aws+perf-testing@example.com"
+      "email": "aws+perf-testing@example.com",
+      "customizations_name": "perf-testing"
     },
     {
       "id": "100000000040",
       "name": "dr-standby",
-      "email": "aws+dr-standby@example.com"
+      "email": "aws+dr-standby@example.com",
+      "customizations_name": "dr-standby"
     },
     {
       "id": "100000000041",
@@ -223,12 +263,22 @@
     {
       "id": "100000000042",
       "name": "compliance-reports",
-      "email": "aws+compliance-reports@example.com"
+      "email": "aws+compliance-reports@example.com",
+      "customizations_name": "compliance-reports"
     }
   ],
   "pipelines": [
     {
       "account_id": "100000000001",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "platform-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "3c6ef362-dde6-4dde-a377-0026516f78de",
@@ -446,6 +496,15 @@
     },
     {
       "account_id": "100000000002",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "platform-stg/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "98c47536-88ea-488e-8623-01a57fca318a",
@@ -663,6 +722,15 @@
     },
     {
       "account_id": "100000000003",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "platform-dev/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "f519f70a-33ee-433e-a8cf-0324ae24ea36",
@@ -774,6 +842,15 @@
     },
     {
       "account_id": "100000000004",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "payments-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "2344b7f4-896f-4896-9a25-03e44552468c",
@@ -1314,6 +1391,15 @@
     },
     {
       "account_id": "100000000006",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "payments/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "0a1a7c86-34f9-434f-90d3-07a23935143a",
@@ -1478,6 +1564,15 @@
     },
     {
       "account_id": "100000000007",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "data-lake-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "4f5a9de5-b53b-4b53-bad4-08c19bf91ebb",
@@ -1695,6 +1790,15 @@
     },
     {
       "account_id": "100000000008",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "data-lake-stg/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "abb01fb9-603f-4603-9d80-0a40ca53d767",
@@ -1912,6 +2016,15 @@
     },
     {
       "account_id": "100000000009",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "analytics-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "0805a18d-0b43-40b4-802d-0bbff8ae9013",
@@ -2076,6 +2189,15 @@
     },
     {
       "account_id": "100000000010",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "analytics-dev/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "4d45c2ec-8b85-48b8-aa2e-0cdf5b729a94",
@@ -2240,6 +2362,15 @@
     },
     {
       "account_id": "100000000011",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "security-audit/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "9285e44b-0bc8-40bc-942f-0dfebe36a515",
@@ -2457,6 +2588,15 @@
     },
     {
       "account_id": "100000000012",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "security-tooling/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "eedb661f-b6cc-4b6c-b6db-0f7dec915dc1",
@@ -2568,6 +2708,15 @@
     },
     {
       "account_id": "100000000013",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "log-archive/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "1d062709-0c4e-40c4-a831-103d83beba17",
@@ -2732,6 +2881,15 @@
     },
     {
       "account_id": "100000000014",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "network-hub-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "62464868-8c90-48c9-9232-115ce682c498",
@@ -2896,6 +3054,15 @@
     },
     {
       "account_id": "100000000015",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "network-hub-dev/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "a78669c7-0cd3-40cd-bc33-127c4946cf19",
@@ -3156,6 +3323,15 @@
     },
     {
       "account_id": "100000000016",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "shared-services/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "7cb9d25f-73a4-473a-a5ce-14481a807981",
@@ -3267,6 +3443,15 @@
     },
     {
       "account_id": "100000000017",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "identity-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "aae49349-c926-4c92-9724-1507b1add5d7",
@@ -3431,6 +3616,15 @@
     },
     {
       "account_id": "100000000018",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "identity-stg/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "f024b4a8-4969-4496-8125-16271471e058",
@@ -3542,6 +3736,15 @@
     },
     {
       "account_id": "100000000019",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "billing-ops/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "1e4f7592-9eeb-49ee-b27b-16e6ab9f3cae",
@@ -3706,6 +3909,15 @@
     },
     {
       "account_id": "100000000020",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "backup-vault/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "638f96f1-1f2d-41f2-9c7c-18060e63472f",
@@ -3870,6 +4082,15 @@
     },
     {
       "account_id": "100000000021",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "ml-training/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "a8cfb850-9f70-49f7-867d-1925712751b0",
@@ -4087,6 +4308,15 @@
     },
     {
       "account_id": "100000000022",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "ml-serving/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "05253a24-4a74-44a7-a929-1aa49f820a5c",
@@ -4304,6 +4534,15 @@
     },
     {
       "account_id": "100000000023",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "edge-cdn/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "617abbf8-f577-4f57-8bd5-1c23cddcc308",
@@ -4468,6 +4707,15 @@
     },
     {
       "account_id": "100000000024",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "api-gateway-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "a6badd57-75ba-475b-b5d6-1d4330a0cd89",
@@ -4579,6 +4827,15 @@
     },
     {
       "account_id": "100000000025",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "api-gateway-stg/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "d4e59e41-cb3c-4cb3-a72c-1e02c7ce29df",
@@ -4743,6 +5000,15 @@
     },
     {
       "account_id": "100000000026",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "search-prod/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "1a25bfa0-4b7f-44b7-912d-1f222a923460",
@@ -4854,6 +5120,15 @@
     },
     {
       "account_id": "100000000027",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "search-dev/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "4850808a-a101-4a10-8284-1fe1c1bf90b6",
@@ -5015,6 +5290,15 @@
     },
     {
       "account_id": "100000000028",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "notifications/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "8d90a1e9-2143-4214-ac85-210124839b37",
@@ -5126,6 +5410,15 @@
     },
     {
       "account_id": "100000000029",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "batch-jobs/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "bbbb62d3-76c5-476c-9ddb-21c0bbb0f78d",
@@ -5394,6 +5687,15 @@
     },
     {
       "account_id": "100000000030",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "reporting/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "2f26451c-4c8a-44c8-b932-239fb5a25e64",
@@ -5558,6 +5860,15 @@
     },
     {
       "account_id": "100000000031",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "crm-integration/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "7466667b-cccc-4ccc-a333-24bf186668e5",
@@ -5669,6 +5980,15 @@
     },
     {
       "account_id": "100000000032",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "partner-portal/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "a2912765-224e-4224-9489-257eaf93c53b",
@@ -5780,6 +6100,15 @@
     },
     {
       "account_id": "100000000033",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "mobile-backend/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "d0bbe84f-77d0-477d-85df-263e46c12191",
@@ -5997,6 +6326,15 @@
     },
     {
       "account_id": "100000000034",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "web-frontend/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "2d116a23-22d4-422d-a88b-27bd751bda3d",
@@ -6214,6 +6552,15 @@
     },
     {
       "account_id": "100000000035",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "sandbox-alice/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "8966ebf7-cdd7-4cdd-8b37-293ca37692e9",
@@ -6431,6 +6778,15 @@
     },
     {
       "account_id": "100000000036",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "sandbox-bob/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "e5bc6dcb-78db-478d-ade3-2abbd1d14b95",
@@ -6542,6 +6898,15 @@
     },
     {
       "account_id": "100000000037",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "sandbox-carol/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "13e72eb5-ce5d-4ce5-9f39-2b7b68fea7eb",
@@ -6759,6 +7124,15 @@
     },
     {
       "account_id": "100000000038",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "qa-automation/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "703cb089-7961-4796-81e5-2cfa97596097",
@@ -6923,6 +7297,15 @@
     },
     {
       "account_id": "100000000039",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "perf-testing/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "b57cd1e8-f9a3-4f9a-abe6-2e19fa1d6b18",
@@ -7192,6 +7575,15 @@
     },
     {
       "account_id": "100000000040",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "dr-standby/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "28e7b431-cf68-4cf6-873d-2ff8f40ed1ef",
@@ -7307,6 +7699,15 @@
     },
     {
       "account_id": "100000000042",
+      "trigger": {
+        "source_action": "aft-account-customizations",
+        "branches": [
+          "main"
+        ],
+        "file_paths": [
+          "compliance-reports/terraform/*.tf"
+        ]
+      },
       "executions": [
         {
           "id": "5712751b-24ea-424e-b893-30b88b3c2e45",
@@ -7480,8 +7881,8 @@
       "[Container] 2026/07/26 04:12:07 Processing environment variables",
       "[Container] 2026/07/26 04:12:08 Entering phase INSTALL",
       "[Container] 2026/07/26 04:12:08 Running command python3 -m venv $HOME/aft-venv",
-      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate \u0026\u0026 pip install --quiet jinja2-cli[yaml] Jinja2",
-      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip \u0026\u0026 unzip -q -o terraform.zip -d /usr/local/bin",
+      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate && pip install --quiet jinja2-cli[yaml] Jinja2",
+      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip && unzip -q -o terraform.zip -d /usr/local/bin",
       "[Container] 2026/07/26 04:12:39 Phase complete: INSTALL State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:39 Entering phase PRE_BUILD",
       "[Container] 2026/07/26 04:12:39 Running command terraform --version",
@@ -7507,7 +7908,7 @@
       "}",
       "[Container] 2026/07/26 04:12:41 Phase complete: PRE_BUILD State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:41 Entering phase BUILD",
-      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color \u0026\u0026 terraform apply -no-color -auto-approve",
+      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color && terraform apply -no-color -auto-approve",
       "Initializing modules...",
       "Downloading registry.terraform.io/terraform-aws-modules/vpc/aws 5.13.0 for vpc...",
       "- vpc in .terraform/modules/vpc",
@@ -7519,7 +7920,7 @@
       "use this backend unless the backend configuration changes.",
       "",
       "Initializing provider plugins...",
-      "- Finding hashicorp/aws versions matching \"~\u003e 5.70\"...",
+      "- Finding hashicorp/aws versions matching \"~> 5.70\"...",
       "- Installing hashicorp/aws v5.82.2...",
       "- Installed hashicorp/aws v5.82.2 (signed by HashiCorp)",
       "",
@@ -7565,7 +7966,7 @@
       "  # module.tagging.aws_resourcegroups_group.cost will be updated in-place",
       "  ~ resource \"aws_resourcegroups_group\" \"cost\" {",
       "        id          = \"cost-center\"",
-      "      ~ description = \"cost center grouping\" -\u003e \"cost center grouping (aft-managed)\"",
+      "      ~ description = \"cost center grouping\" -> \"cost center grouping (aft-managed)\"",
       "    }",
       "",
       "Plan: 2 to add, 1 to change, 0 to destroy.",
@@ -7592,8 +7993,8 @@
       "[Container] 2026/07/26 04:12:07 Processing environment variables",
       "[Container] 2026/07/26 04:12:08 Entering phase INSTALL",
       "[Container] 2026/07/26 04:12:08 Running command python3 -m venv $HOME/aft-venv",
-      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate \u0026\u0026 pip install --quiet jinja2-cli[yaml] Jinja2",
-      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip \u0026\u0026 unzip -q -o terraform.zip -d /usr/local/bin",
+      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate && pip install --quiet jinja2-cli[yaml] Jinja2",
+      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip && unzip -q -o terraform.zip -d /usr/local/bin",
       "[Container] 2026/07/26 04:12:39 Phase complete: INSTALL State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:39 Entering phase PRE_BUILD",
       "[Container] 2026/07/26 04:12:39 Running command terraform --version",
@@ -7619,7 +8020,7 @@
       "}",
       "[Container] 2026/07/26 04:12:41 Phase complete: PRE_BUILD State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:41 Entering phase BUILD",
-      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color \u0026\u0026 terraform apply -no-color -auto-approve",
+      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color && terraform apply -no-color -auto-approve",
       "Initializing modules...",
       "Downloading registry.terraform.io/terraform-aws-modules/vpc/aws 5.13.0 for vpc...",
       "- vpc in .terraform/modules/vpc",
@@ -7631,7 +8032,7 @@
       "use this backend unless the backend configuration changes.",
       "",
       "Initializing provider plugins...",
-      "- Finding hashicorp/aws versions matching \"~\u003e 5.70\"...",
+      "- Finding hashicorp/aws versions matching \"~> 5.70\"...",
       "- Installing hashicorp/aws v5.82.2...",
       "- Installed hashicorp/aws v5.82.2 (signed by HashiCorp)",
       "",
@@ -7665,8 +8066,8 @@
       "[Container] 2026/07/26 04:12:07 Processing environment variables",
       "[Container] 2026/07/26 04:12:08 Entering phase INSTALL",
       "[Container] 2026/07/26 04:12:08 Running command python3 -m venv $HOME/aft-venv",
-      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate \u0026\u0026 pip install --quiet jinja2-cli[yaml] Jinja2",
-      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip \u0026\u0026 unzip -q -o terraform.zip -d /usr/local/bin",
+      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate && pip install --quiet jinja2-cli[yaml] Jinja2",
+      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip && unzip -q -o terraform.zip -d /usr/local/bin",
       "[Container] 2026/07/26 04:12:39 Phase complete: INSTALL State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:39 Entering phase PRE_BUILD",
       "[Container] 2026/07/26 04:12:39 Running command terraform --version",
@@ -7692,7 +8093,7 @@
       "}",
       "[Container] 2026/07/26 04:12:41 Phase complete: PRE_BUILD State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:41 Entering phase BUILD",
-      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color \u0026\u0026 terraform apply -no-color -auto-approve",
+      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color && terraform apply -no-color -auto-approve",
       "Initializing modules...",
       "Downloading registry.terraform.io/terraform-aws-modules/vpc/aws 5.13.0 for vpc...",
       "- vpc in .terraform/modules/vpc",
@@ -7704,7 +8105,7 @@
       "use this backend unless the backend configuration changes.",
       "",
       "Initializing provider plugins...",
-      "- Finding hashicorp/aws versions matching \"~\u003e 5.70\"...",
+      "- Finding hashicorp/aws versions matching \"~> 5.70\"...",
       "- Installing hashicorp/aws v5.82.2...",
       "- Installed hashicorp/aws v5.82.2 (signed by HashiCorp)",
       "",
@@ -7752,8 +8153,8 @@
       "[Container] 2026/07/26 04:12:07 Processing environment variables",
       "[Container] 2026/07/26 04:12:08 Entering phase INSTALL",
       "[Container] 2026/07/26 04:12:08 Running command python3 -m venv $HOME/aft-venv",
-      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate \u0026\u0026 pip install --quiet jinja2-cli[yaml] Jinja2",
-      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip \u0026\u0026 unzip -q -o terraform.zip -d /usr/local/bin",
+      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate && pip install --quiet jinja2-cli[yaml] Jinja2",
+      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip && unzip -q -o terraform.zip -d /usr/local/bin",
       "[Container] 2026/07/26 04:12:39 Phase complete: INSTALL State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:39 Entering phase PRE_BUILD",
       "[Container] 2026/07/26 04:12:39 Running command terraform --version",
@@ -7779,24 +8180,24 @@
       "}",
       "[Container] 2026/07/26 04:12:41 Phase complete: PRE_BUILD State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:41 Entering phase BUILD",
-      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color \u0026\u0026 terraform apply -no-color -auto-approve",
+      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color && terraform apply -no-color -auto-approve",
       "Initializing modules...",
       "- vpc in .terraform/modules/vpc",
       "",
       "Initializing the backend...",
       "",
       "Initializing provider plugins...",
-      "- Finding hashicorp/aws versions matching \"\u003e= 5.70.0, \u003c 7.0.0\"...",
+      "- Finding hashicorp/aws versions matching \">= 5.70.0, < 7.0.0\"...",
       "- Finding latest version of hashicorp/awscc...",
       "╷",
       "│ Error: Failed to query available provider packages",
       "│",
       "│ Could not retrieve the list of available versions for provider",
       "│ hashicorp/aws: no available releases match the given constraints",
-      "│ \u003e= 5.70.0, \u003c 6.0.0, \u003e= 6.2.0",
+      "│ >= 5.70.0, < 6.0.0, >= 6.2.0",
       "│",
-      "│ The module module.vpc depends on hashicorp/aws \u003e= 6.2.0, but the root",
-      "│ module pins \u003c 6.0.0. Bump the root constraint or pin the module.",
+      "│ The module module.vpc depends on hashicorp/aws >= 6.2.0, but the root",
+      "│ module pins < 6.0.0. Bump the root constraint or pin the module.",
       "╵",
       "",
       "[Container] 2026/07/26 04:15:22 Phase complete: BUILD State: FAILED",
@@ -7812,8 +8213,8 @@
       "[Container] 2026/07/26 04:12:07 Processing environment variables",
       "[Container] 2026/07/26 04:12:08 Entering phase INSTALL",
       "[Container] 2026/07/26 04:12:08 Running command python3 -m venv $HOME/aft-venv",
-      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate \u0026\u0026 pip install --quiet jinja2-cli[yaml] Jinja2",
-      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip \u0026\u0026 unzip -q -o terraform.zip -d /usr/local/bin",
+      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate && pip install --quiet jinja2-cli[yaml] Jinja2",
+      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip && unzip -q -o terraform.zip -d /usr/local/bin",
       "[Container] 2026/07/26 04:12:39 Phase complete: INSTALL State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:39 Entering phase PRE_BUILD",
       "[Container] 2026/07/26 04:12:39 Running command terraform --version",
@@ -7839,7 +8240,7 @@
       "}",
       "[Container] 2026/07/26 04:12:41 Phase complete: PRE_BUILD State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:41 Entering phase BUILD",
-      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color \u0026\u0026 terraform apply -no-color -auto-approve",
+      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color && terraform apply -no-color -auto-approve",
       "Initializing modules...",
       "- vpc in .terraform/modules/vpc",
       "",
@@ -7875,8 +8276,8 @@
       "[Container] 2026/07/26 04:12:07 Processing environment variables",
       "[Container] 2026/07/26 04:12:08 Entering phase INSTALL",
       "[Container] 2026/07/26 04:12:08 Running command python3 -m venv $HOME/aft-venv",
-      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate \u0026\u0026 pip install --quiet jinja2-cli[yaml] Jinja2",
-      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip \u0026\u0026 unzip -q -o terraform.zip -d /usr/local/bin",
+      "[Container] 2026/07/26 04:12:22 Running command source $HOME/aft-venv/bin/activate && pip install --quiet jinja2-cli[yaml] Jinja2",
+      "[Container] 2026/07/26 04:12:35 Running command curl -q -o terraform.zip https://releases.hashicorp.com/terraform/1.15.8/terraform_1.15.8_linux_amd64.zip && unzip -q -o terraform.zip -d /usr/local/bin",
       "[Container] 2026/07/26 04:12:39 Phase complete: INSTALL State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:39 Entering phase PRE_BUILD",
       "[Container] 2026/07/26 04:12:39 Running command terraform --version",
@@ -7902,7 +8303,7 @@
       "}",
       "[Container] 2026/07/26 04:12:41 Phase complete: PRE_BUILD State: SUCCEEDED",
       "[Container] 2026/07/26 04:12:41 Entering phase BUILD",
-      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color \u0026\u0026 terraform apply -no-color -auto-approve",
+      "[Container] 2026/07/26 04:12:41 Running command terraform init -no-color && terraform apply -no-color -auto-approve",
       "Initializing modules...",
       "Downloading registry.terraform.io/terraform-aws-modules/vpc/aws 5.13.0 for vpc...",
       "- vpc in .terraform/modules/vpc",
@@ -7914,7 +8315,7 @@
       "use this backend unless the backend configuration changes.",
       "",
       "Initializing provider plugins...",
-      "- Finding hashicorp/aws versions matching \"~\u003e 5.70\"...",
+      "- Finding hashicorp/aws versions matching \"~> 5.70\"...",
       "- Installing hashicorp/aws v5.82.2...",
       "- Installed hashicorp/aws v5.82.2 (signed by HashiCorp)",
       "",

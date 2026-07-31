@@ -76,6 +76,10 @@ go build -o aft-ops ./cmd/aft-ops
 ./aft-ops pipeline executions my-account --actions
 ./aft-ops pipeline logs my-account --execution <execution-id> --summary
 
+# check that every pipeline still carries its push trigger (see Triggers below)
+./aft-ops pipeline triggers
+./aft-ops pipeline triggers --state missing,drift --fail-on-drift
+
 # re-release everything that failed (dry-run first)
 ./aft-ops pipeline release --status Failed --dry-run
 ./aft-ops pipeline release --status Failed
@@ -157,11 +161,20 @@ batch:
 
 cache:
   status_ttl: 10m        # latest-status cache; 0 = always fan out
+  trigger_ttl: 1h        # pipeline-trigger cache; 0 = always fan out
   executions_ttl: 15m    # in-session execution-history memo
 
 release:
   max_targets: 50
   skip_in_progress: true
+
+# The push trigger `pipeline triggers` expects each account pipeline to carry.
+# There is no per-account entry: file_path_template is expanded with that
+# account's own account_customizations_name from AFT's metadata table.
+trigger:
+  source_action: aft-account-customizations
+  branch: main
+  file_path_template: "{customizations_name}/terraform/*.tf"
 
 tui:
   poll_interval: 30s     # auto-refresh of running pipelines (also --watch's default)
@@ -194,6 +207,43 @@ whole inventory before deciding what to release, and named targets and
 `--account` groups are refetched individually, so neither the selection nor
 the in-progress skip is made on minutes-old data.
 
+## Triggers
+
+AFT's customizations pipeline template declares no trigger at all — both of its
+source actions run with change detection off. Any push trigger on an account
+pipeline is therefore out-of-band, and re-running `aft-create-pipeline` removes
+it. That happens across the whole fleet during an AFT upgrade or after
+rebuilding a CodeConnections connection, and nothing announces it.
+
+`pipeline triggers` is the read-only report that makes it visible:
+
+```bash
+./aft-ops pipeline triggers
+```
+
+```
+ACCOUNT NAME   ACCOUNT ID    TRIGGER  DETAIL
+payments-stg   100000000005  missing  no trigger configured
+payments-dev   100000000006  drift    file_paths: got payments/terraform/*.tf, want payments-dev/terraform/*.tf
+payments-prod  100000000004  ok       payments-prod/terraform/*.tf
+```
+
+Rows are ordered by what needs attention, and `--fail-on-drift` turns the
+report into a check a scheduled job can run.
+
+The expectation is derived rather than configured per account: AFT records each
+account's `account_customizations_name` in `aft-request-metadata`, and the
+file-path filter follows from it via `trigger.file_path_template`. Several
+hundred pipelines are therefore covered by three configuration lines, and the
+expectation cannot drift away from what AFT itself recorded. An account with no
+customizations name is reported as `unknown` — not `ok`, because a report that
+could not judge a pipeline must not read as a clean bill of health.
+
+This is deliberately read-only. Making the triggers permanent is a change to
+how the pipelines are built, not something to reconcile from outside; a tool
+that also wrote them would leave two things claiming to own the same
+configuration.
+
 ## Permissions
 
 Everything runs against the AFT management account, and the split the tool
@@ -214,7 +264,7 @@ framework's in CloudTrail. Grant the two below instead.
 
 | Service | Actions |
 |---|---|
-| CodePipeline | `ListPipelines`, `GetPipelineState`, `ListPipelineExecutions`, `ListActionExecutions` |
+| CodePipeline | `ListPipelines`, `GetPipeline`, `GetPipelineState`, `ListPipelineExecutions`, `ListActionExecutions` |
 | CodeBuild | `BatchGetBuilds` |
 | CloudWatch Logs | `GetLogEvents` |
 | DynamoDB | `Scan` on `aft-request-metadata` (with `account_source: aft-dynamodb`) |

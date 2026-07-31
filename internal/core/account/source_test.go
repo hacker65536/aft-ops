@@ -3,9 +3,12 @@ package account
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"github.com/hacker65536/aft-ops/internal/core/model"
 )
 
 // fakeScan returns a single canned page, satisfying dynamodb.ScanAPIClient.
@@ -52,14 +55,42 @@ func TestDynamoSourceMapsLiveSchema(t *testing.T) {
 		t.Fatalf("got %d accounts, want 2 (the id-less item must be dropped)", len(accounts))
 	}
 
-	byID := map[string]struct{ name, email string }{}
+	byID := map[string]model.Account{}
 	for _, a := range accounts {
-		byID[a.ID] = struct{ name, email string }{a.Name, a.Email}
+		byID[a.ID] = a
 	}
-	if got := byID["943321203864"]; got.name != "bpaas-ai-dev" || got.email != "admin+bpaas-ai-dev-root@example.com" {
+	if got := byID["943321203864"]; got.Name != "bpaas-ai-dev" || got.Email != "admin+bpaas-ai-dev-root@example.com" {
 		t.Errorf("943321203864 mapped to %+v, want name=bpaas-ai-dev with email", got)
 	}
-	if got := byID["111122223333"]; got.name != "only-custom" {
-		t.Errorf("name fallback failed: got %q, want only-custom", got.name)
+	if got := byID["111122223333"]; got.Name != "only-custom" {
+		t.Errorf("name fallback failed: got %q, want only-custom", got.Name)
+	}
+	// The customizations name is carried, not just used as a name fallback:
+	// it is what the expected pipeline trigger's file path is derived from.
+	for id, want := range map[string]string{
+		"943321203864": "bpaas-ai-dev",
+		"111122223333": "only-custom",
+	} {
+		if got := byID[id].CustomizationsName; got != want {
+			t.Errorf("%s customizations name = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// An account source that has no notion of a customizations name leaves it
+// empty, which is what makes the trigger report say "unknown" rather than
+// judging the pipeline against a made-up path.
+func TestResolverHasCustomizationsNames(t *testing.T) {
+	with := newResolver([]model.Account{
+		{ID: "111111111111", Name: "a"},
+		{ID: "222222222222", Name: "b", CustomizationsName: "b"},
+	}, time.Time{}, false, "test")
+	if !with.HasCustomizationsNames() {
+		t.Error("one account with a customizations name should report true")
+	}
+	without := newResolver([]model.Account{{ID: "111111111111", Name: "a"}},
+		time.Time{}, false, "test")
+	if without.HasCustomizationsNames() {
+		t.Error("no account with a customizations name should report false")
 	}
 }
