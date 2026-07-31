@@ -132,8 +132,14 @@ plan ステージも手動承認アクションも存在しない。IaC 適用�
 | [#153](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/153) | The Change Management - Approval Process（本命の tracking issue） | **2022-05 起票・open のまま** |
 | [#302](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/302) | account-request に plan + approval ステージを | #153 の重複として close |
 | [#481](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/481) | Add plan and approval stage for CodePipeline | 2024-08 起票・open |
-| [#624](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/pull/624) | apply-with-approval workflow type の PR | **unmerged で close** |
-| [#636](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/636) | fork ベースの承認ゲート PoC | 2026-07 公開。上流は現状 community contribution を受け付けない旨が明記されている |
+| [#542](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/pull/542) | plan/approve/apply の代替ワークフローを実装した PR | 2025-03 起票・**open のままレビューされていない** |
+| [#624](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/pull/624) | apply-with-approval workflow type の PR | 反応が無く**作者自身が翌日 close** |
+| [#636](https://github.com/aws-ia/terraform-aws-control_tower_account_factory/issues/636) | fork ベースの承認ゲート PoC | 2026-07 公開。PR ではなく issue として出されている |
+
+そもそもリポジトリの `CONTRIBUTING.md` に「At this time, we are not accepting contributions.」と
+明記されており、コミュニティ側の PR が merge される経路が無い。#153 に対する上流の応答は
+2022-06 の「internal backlog に記録した」が最後で、以降 4 年間、実装の予定も見送りの判断も
+表明されていない。**待って解決する見込みが立たない領域**だと考えるのが妥当。
 
 #### 補完策と、そこで trigger が担う役割
 
@@ -152,8 +158,9 @@ trigger が消えたときに起きるのは**失敗ではなく無反応**で�
 merge しても apply が走らず、CI は成功し、パイプラインは前回の状態のまま何も言わない。
 気づく手段が無い。
 
-なお上流の設計思想では「customizations パイプラインは手動起動が前提」とされている（#153 の議論）。
-自動 trigger を足すというのは、その前提から外れて **PR の plan ゲートに承認点を移す**構成への
+なお AFT のテンプレートは trigger を宣言しないだけでなく、両ソースアクションの変更検知も
+明示的に切っている。**customizations パイプラインは手動起動を前提に作られている**ということで、
+自動 trigger を足すのはその前提から外れて **PR の plan ゲートに承認点を移す**構成への
 乗り換えを意味する。つまりこの trigger は利便性ではなく**統制の一部**であり、
 その消失は統制の穴になる。ドリフト検出が要る理由はここにある。
 
