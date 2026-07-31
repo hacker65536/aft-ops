@@ -53,7 +53,7 @@ type LogsFunc func(ctx context.Context, buildID string) ([]string, error)
 // pipeline.Service.Release with the write client). It reports the per-target
 // results; the guard (max targets) and in-progress skipping live in the core,
 // exactly as for the CLI.
-type ReleaseFunc func(ctx context.Context, targets []model.PipelineSummary, onProgress func(batch.Progress)) ([]model.ReleaseResult, error)
+type ReleaseFunc func(ctx context.Context, targets []model.PipelineSummary, onProgress func(batch.Progress)) ([]model.StartExecutionResult, error)
 
 // Deps bundles the core-service closures the TUI needs. The TUI depends only
 // on these function types, never on AWS clients directly.

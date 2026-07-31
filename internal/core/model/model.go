@@ -512,8 +512,9 @@ func (d PipelineDetail) FailedActions() []ActionState {
 	return out
 }
 
-// ReleaseResult is the outcome of one StartPipelineExecution.
-type ReleaseResult struct {
+// StartExecutionResult is the outcome of starting one pipeline: the id of
+// the execution that began, or why none did.
+type StartExecutionResult struct {
 	PipelineName string `json:"pipeline_name"`
 	AccountID    string `json:"account_id,omitempty"`
 	AccountName  string `json:"account_name,omitempty"`

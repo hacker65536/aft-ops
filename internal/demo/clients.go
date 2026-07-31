@@ -299,7 +299,7 @@ func (c *StartClient) StartPipelineExecution(ctx context.Context,
 			RevisionID: e.nextID("c"),
 			Summary:    `{"ProviderType":"GitHub","CommitMessage":"chore: re-run customizations"}`,
 		},
-		Actions: e.releaseActions(*p, takes),
+		Actions: e.executionActions(*p, takes),
 	}
 	p.Executions = append([]Execution{ex}, p.Executions...)
 	return &codepipeline.StartPipelineExecutionOutput{
@@ -307,11 +307,11 @@ func (c *StartClient) StartPipelineExecution(ctx context.Context,
 	}, nil
 }
 
-// releaseActions builds the action set of a released run. It reuses the
-// pipeline's own most recent shape (same stages and action names, rescaled
-// to the release duration) so a demo release looks like that pipeline's
-// other runs rather than a generic stand-in.
-func (e *Env) releaseActions(p Pipeline, takes time.Duration) []Action {
+// executionActions builds the action set of a newly started run. It reuses
+// the pipeline's own most recent shape (same stages and action names,
+// rescaled to the fixture's release.takes) so a demo release looks like that
+// pipeline's other runs rather than a generic stand-in.
+func (e *Env) executionActions(p Pipeline, takes time.Duration) []Action {
 	tmpl := defaultActions()
 	if len(p.Executions) > 0 && len(p.Executions[0].Actions) > 0 {
 		tmpl = p.Executions[0].Actions

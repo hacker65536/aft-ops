@@ -519,24 +519,24 @@ func isCodeBuildID(id string) bool {
 	return strings.Contains(id, ":")
 }
 
-// ReleaseRequest is one guarded batch of StartPipelineExecution calls.
-type ReleaseRequest struct {
+// StartExecutionRequest is one guarded batch of StartPipelineExecution calls.
+type StartExecutionRequest struct {
 	Targets        []model.PipelineSummary
 	SkipInProgress bool
 }
 
-// Release triggers the targets through the batch engine. In-progress
-// pipelines are skipped when SkipInProgress (re-releasing them supersedes
+// StartExecution triggers the targets through the batch engine. In-progress
+// pipelines are skipped when SkipInProgress (starting them again supersedes
 // the running execution, which is rarely what an operator wants).
-func (s *Service) Release(
+func (s *Service) StartExecution(
 	ctx context.Context,
 	start StartAPI,
-	req ReleaseRequest,
+	req StartExecutionRequest,
 	onProgress func(batch.Progress),
-) []model.ReleaseResult {
+) []model.StartExecutionResult {
 	results := batch.Run(ctx, s.Batch, req.Targets,
-		func(ctx context.Context, t model.PipelineSummary) (model.ReleaseResult, error) {
-			r := model.ReleaseResult{
+		func(ctx context.Context, t model.PipelineSummary) (model.StartExecutionResult, error) {
+			r := model.StartExecutionResult{
 				PipelineName: t.PipelineName,
 				AccountID:    t.AccountID,
 				AccountName:  t.AccountName,
@@ -557,11 +557,11 @@ func (s *Service) Release(
 			return r, nil
 		}, onProgress)
 
-	out := make([]model.ReleaseResult, len(results))
+	out := make([]model.StartExecutionResult, len(results))
 	for i, res := range results {
 		if res.Err != nil && res.Value.PipelineName == "" {
 			// batch-level failure (e.g. cancelled before start)
-			out[i] = model.ReleaseResult{
+			out[i] = model.StartExecutionResult{
 				PipelineName: req.Targets[i].PipelineName,
 				AccountID:    req.Targets[i].AccountID,
 				AccountName:  req.Targets[i].AccountName,

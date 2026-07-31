@@ -26,7 +26,7 @@ const (
 
 // releaseDoneMsg carries the batch release outcome.
 type releaseDoneMsg struct {
-	results []model.ReleaseResult
+	results []model.StartExecutionResult
 	err     error
 }
 
@@ -53,7 +53,7 @@ type releaseModel struct {
 	spin       spinner.Model
 	progress   batch.Progress
 	progressCh chan batch.Progress
-	results    []model.ReleaseResult
+	results    []model.StartExecutionResult
 	err        error
 	width      int
 	height     int
@@ -277,13 +277,13 @@ func renderSummaries(items []model.PipelineSummary) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func renderResults(items []model.ReleaseResult) string {
+func renderResults(items []model.StartExecutionResult) string {
 	var b strings.Builder
 	output.ReleaseTable(&b, items, false)
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func startedNames(results []model.ReleaseResult) []string {
+func startedNames(results []model.StartExecutionResult) []string {
 	var out []string
 	for _, r := range results {
 		if r.ExecutionID != "" && r.Error == "" {
@@ -293,7 +293,7 @@ func startedNames(results []model.ReleaseResult) []string {
 	return out
 }
 
-func releaseCounts(results []model.ReleaseResult) (started, skipped, failed int) {
+func releaseCounts(results []model.StartExecutionResult) (started, skipped, failed int) {
 	for _, r := range results {
 		switch {
 		case r.Error != "":

@@ -206,7 +206,7 @@ func StatusFreshness(w io.Writer, stats model.StatusStats) {
 }
 
 // ReleaseTable renders release results.
-func ReleaseTable(w io.Writer, items []model.ReleaseResult, color bool) {
+func ReleaseTable(w io.Writer, items []model.StartExecutionResult, color bool) {
 	var tw tableWriter
 	tw.row("ACCOUNT NAME", "ACCOUNT ID", "RESULT", "EXECUTION/REASON")
 	for _, r := range items {

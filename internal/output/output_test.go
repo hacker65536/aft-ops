@@ -170,7 +170,7 @@ func TestStatusFreshness(t *testing.T) {
 
 func TestReleaseTableCoversEveryOutcome(t *testing.T) {
 	var b bytes.Buffer
-	ReleaseTable(&b, []model.ReleaseResult{
+	ReleaseTable(&b, []model.StartExecutionResult{
 		{PipelineName: "a", AccountName: "alpha", AccountID: "111111111111", ExecutionID: "exec-abcdef12345"},
 		{PipelineName: "b", AccountName: "bravo", AccountID: "222222222222", Skipped: true, SkipReason: "InProgress"},
 		{PipelineName: "c", AccountName: "charlie", AccountID: "333333333333", Error: "AccessDenied"},

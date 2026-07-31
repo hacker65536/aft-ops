@@ -196,6 +196,16 @@ terraform ログ抽出（`core/logs`）:
   write profile の identity を検証できなかった場合も拒否する（`GetCallerIdentity` は
   IAM 権限を要さないため、失敗はクレデンシャル自体が壊れていることを意味する）
 
+**語彙: `release` は UI 層の語、`execution` はドメインの語。** 「Release change」は
+AWS コンソールのボタン名であって API 名ではない（API は `StartPipelineExecution` のみ）。
+そのためユーザーが触れる面 — CLI の `pipeline release`、TUI の release 画面、
+設定キー `release.*`、demo fixture の `release` — はコンソールに合わせて `release` を使い、
+UI を知らないはずのコア層（`internal/core`）は `StartExecution` /
+`StartExecutionRequest` / `model.StartExecutionResult` と API 側に揃える。
+`release` は常に**動詞**として使い、名詞には `execution` を使う（「3 件の release」ではなく
+「3 件の execution」）。これは §3 の「コア層は UI 非依存」の語彙面での帰結であり、
+`pipeline executions`（読み取り）と 1 文字違いの書き込みコマンドを作らないための制約でもある。
+
 ## 5. 逐次バッチエンジン（internal/batch）
 
 要件 F4 の中核。「チャンク逐次 × チャンク内並列」+ レート制御 + 計測。

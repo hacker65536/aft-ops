@@ -814,7 +814,7 @@ pipelines, so an unattended --yes cannot quietly widen as the fleet grows.`,
 				}
 			}
 
-			results := svc.Release(ctx, start, pipeline.ReleaseRequest{
+			results := svc.StartExecution(ctx, start, pipeline.StartExecutionRequest{
 				Targets:        targets,
 				SkipInProgress: app.Cfg.Release.SkipInProgress && !includeInProgress,
 			}, progressPrinter(app))

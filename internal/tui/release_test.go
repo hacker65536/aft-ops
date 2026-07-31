@@ -73,7 +73,7 @@ func TestSelectionRendersAsRowHighlight(t *testing.T) {
 // x with a selection pushes the release screen for the selected targets.
 func TestKeyXPushesRelease(t *testing.T) {
 	m := testModel(t, nil)
-	m.release = func(context.Context, []model.PipelineSummary, func(batch.Progress)) ([]model.ReleaseResult, error) {
+	m.release = func(context.Context, []model.PipelineSummary, func(batch.Progress)) ([]model.StartExecutionResult, error) {
 		return nil, nil
 	}
 	m.releaseLimit = 50
@@ -99,7 +99,7 @@ func TestKeyXPushesRelease(t *testing.T) {
 // x with nothing selected is a no-op.
 func TestKeyXNoSelectionIsNoop(t *testing.T) {
 	m := testModel(t, nil)
-	m.release = func(context.Context, []model.PipelineSummary, func(batch.Progress)) ([]model.ReleaseResult, error) {
+	m.release = func(context.Context, []model.PipelineSummary, func(batch.Progress)) ([]model.StartExecutionResult, error) {
 		return nil, nil
 	}
 	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}); cmd != nil {
@@ -146,9 +146,9 @@ func TestReleaseCancelPops(t *testing.T) {
 // key then pops back while asking the list to refresh the started rows.
 func TestReleaseConfirmRunDone(t *testing.T) {
 	ran := false
-	run := func(context.Context, []model.PipelineSummary, func(batch.Progress)) ([]model.ReleaseResult, error) {
+	run := func(context.Context, []model.PipelineSummary, func(batch.Progress)) ([]model.StartExecutionResult, error) {
 		ran = true
-		return []model.ReleaseResult{
+		return []model.StartExecutionResult{
 			{PipelineName: alphaPipeline, ExecutionID: "exec-1"},
 		}, nil
 	}
@@ -163,7 +163,7 @@ func TestReleaseConfirmRunDone(t *testing.T) {
 		t.Error("running should return a command that executes the release")
 	}
 
-	next, _ = m.Update(releaseDoneMsg{results: []model.ReleaseResult{
+	next, _ = m.Update(releaseDoneMsg{results: []model.StartExecutionResult{
 		{PipelineName: alphaPipeline, ExecutionID: "exec-1"},
 	}})
 	m = next.(releaseModel)
@@ -211,7 +211,7 @@ func TestReleaseConfirmRunDone(t *testing.T) {
 
 // releaseCounts tallies started/skipped/failed correctly.
 func TestReleaseCounts(t *testing.T) {
-	results := []model.ReleaseResult{
+	results := []model.StartExecutionResult{
 		{PipelineName: "a", ExecutionID: "e1"},
 		{PipelineName: "b", Skipped: true, SkipReason: "InProgress"},
 		{PipelineName: "c", Error: "boom"},

@@ -137,7 +137,7 @@ func runTUI(ctx context.Context, app *App) error {
 	// path and guard as `pipeline release`. In-progress skipping comes from
 	// config. Cache invalidation is best-effort (the screen refreshes the
 	// started rows afterward regardless); stderr is off-limits in the TUI.
-	release := func(ctx context.Context, targets []model.PipelineSummary, onProgress func(batch.Progress)) ([]model.ReleaseResult, error) {
+	release := func(ctx context.Context, targets []model.PipelineSummary, onProgress func(batch.Progress)) ([]model.StartExecutionResult, error) {
 		svc, err := app.PipelineService(ctx)
 		if err != nil {
 			return nil, err
@@ -146,7 +146,7 @@ func runTUI(ctx context.Context, app *App) error {
 		if err != nil {
 			return nil, err
 		}
-		results := svc.Release(ctx, start, pipeline.ReleaseRequest{
+		results := svc.StartExecution(ctx, start, pipeline.StartExecutionRequest{
 			Targets:        targets,
 			SkipInProgress: app.Cfg.Release.SkipInProgress,
 		}, onProgress)
