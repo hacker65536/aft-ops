@@ -23,14 +23,10 @@ func Execute(ctx context.Context) error {
 	defer app.closeMetrics()
 
 	var (
-		cfgPath       string
-		profile       string
-		region        string
-		awsConfigFile string
-		outFormat     string
-		demoPath      string
-		concurrency   int
-		rps           float64
+		cfgPath   string
+		flags     rootFlags
+		outFormat string
+		demoPath  string
 	)
 
 	root := &cobra.Command{
@@ -44,22 +40,7 @@ func Execute(ctx context.Context) error {
 			if err != nil {
 				return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 			}
-			// flags > env > file > defaults
-			if cmd.Flags().Changed("profile") {
-				cfg.Profile = profile
-			}
-			if cmd.Flags().Changed("region") {
-				cfg.Region = region
-			}
-			if cmd.Flags().Changed("aws-config-file") {
-				cfg.AWSConfigFile = awsConfigFile
-			}
-			if cmd.Flags().Changed("concurrency") {
-				cfg.Batch.Concurrency = concurrency
-			}
-			if cmd.Flags().Changed("rps") {
-				cfg.Batch.RPS = rps
-			}
+			flags.apply(cmd.Flags().Changed, &cfg)
 			if err := applyDemo(app, &cfg, demoPath); err != nil {
 				return err
 			}
@@ -92,17 +73,19 @@ func Execute(ctx context.Context) error {
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&cfgPath, "config", "", "config file (default ~/.config/aft-ops/config.yaml)")
-	pf.StringVar(&profile, "profile", "", "AWS profile")
-	pf.StringVar(&region, "region", "", "AWS region")
-	pf.StringVar(&awsConfigFile, "aws-config-file", "",
+	pf.StringVar(&flags.profile, "profile", "", "AWS profile")
+	pf.StringVar(&flags.writeProfile, "write-profile", "",
+		"AWS profile for mutating operations (default: --profile; must resolve to the same account)")
+	pf.StringVar(&flags.region, "region", "", "AWS region")
+	pf.StringVar(&flags.awsConfigFile, "aws-config-file", "",
 		"AWS shared config file the profile is looked up in (default: $AWS_CONFIG_FILE, else ~/.aws/config)")
 	pf.StringVarP(&outFormat, "output", "o", string(output.FormatTable), "output format: table|json")
 	pf.StringVar(&demoPath, "demo", "",
 		"run against a local fixture instead of AWS (offline demo; see docs/demo)")
 	pf.BoolVar(&app.NoColor, "no-color", false, "disable colored output")
 	pf.BoolVar(&app.Refresh, "refresh", false, "bypass caches and refetch")
-	pf.IntVar(&concurrency, "concurrency", 0, "batch concurrency (overrides config)")
-	pf.Float64Var(&rps, "rps", 0, "API requests per second limit, 0 = unlimited (overrides config)")
+	pf.IntVar(&flags.concurrency, "concurrency", 0, "batch concurrency (overrides config)")
+	pf.Float64Var(&flags.rps, "rps", 0, "API requests per second limit, 0 = unlimited (overrides config)")
 
 	root.AddCommand(
 		newPipelineCmd(app),
@@ -114,6 +97,47 @@ func Execute(ctx context.Context) error {
 	)
 
 	return root.ExecuteContext(ctx)
+}
+
+// rootFlags are the persistent flags that override a configuration key.
+type rootFlags struct {
+	profile       string
+	writeProfile  string
+	region        string
+	awsConfigFile string
+	concurrency   int
+	rps           float64
+}
+
+// apply merges the flags the operator actually passed into cfg, completing
+// the flags > env > file > defaults order. changed reports whether a flag was
+// set (cmd.Flags().Changed in the command tree), so a flag left at its zero
+// value never overwrites a configured one.
+//
+// Note what this deliberately does not do: --profile moves the read profile
+// only. A configured write_profile is a value someone wrote down on purpose,
+// and quietly retargeting it would hide the very mix-up being guarded
+// against — App.WriteAWS refuses the pair when they land in different
+// accounts, and --write-profile is how you move both.
+func (f rootFlags) apply(changed func(string) bool, cfg *config.Config) {
+	if changed("profile") {
+		cfg.Profile = f.profile
+	}
+	if changed("write-profile") {
+		cfg.WriteProfile = f.writeProfile
+	}
+	if changed("region") {
+		cfg.Region = f.region
+	}
+	if changed("aws-config-file") {
+		cfg.AWSConfigFile = f.awsConfigFile
+	}
+	if changed("concurrency") {
+		cfg.Batch.Concurrency = f.concurrency
+	}
+	if changed("rps") {
+		cfg.Batch.RPS = f.rps
+	}
 }
 
 // applyDemo switches the app into offline demo mode when --demo (or

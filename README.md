@@ -136,6 +136,13 @@ profile: my-aft-management-profile
 region: ap-northeast-1
 account_source: aft-dynamodb   # aft-dynamodb | organizations | static
 
+# Profile used for Release change and other writes. Unset means writes use
+# `profile`. It is meant for a different role in the *same* account (read-only
+# for browsing, administrator for releasing): a run operates on one account,
+# and a write profile resolving elsewhere is refused before anything starts.
+# `--profile` moves the read side only — pass `--write-profile` to move both.
+write_profile: my-aft-management-admin-profile
+
 # Which shared config file `profile` is looked up in. Unset (the default)
 # leaves this to the SDK: $AWS_CONFIG_FILE if set, otherwise ~/.aws/config.
 # Set it when you keep one config file per AWS organization — it ties the

@@ -779,6 +779,14 @@ pipelines, so an unattended --yes cannot quietly widen as the fleet grows.`,
 			fmt.Fprintf(os.Stderr, "%d target(s):\n", len(targets))
 			output.PipelineTable(os.Stderr, targets, app.StderrIsTTY() && !app.NoColor)
 			if dryRun {
+				// A dry run stops before any write credentials are resolved,
+				// so it cannot check which account they land in. Name the
+				// profile a real run would use, marked as unchecked, rather
+				// than let the rehearsal imply the write side was looked at.
+				if wp := app.Cfg.EffectiveWriteProfile(); wp != app.Cfg.Profile {
+					fmt.Fprintf(os.Stderr,
+						"dry-run: a real run would write with profile %s (not verified here)\n", wp)
+				}
 				fmt.Fprintln(os.Stderr, "dry-run: nothing released")
 				return nil
 			}

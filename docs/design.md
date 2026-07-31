@@ -171,6 +171,7 @@ terraform ログ抽出（`core/logs`）:
 → --expect による件数アサーション（指定時）
 → 対象の status を再取得（下記）
 → dry-run 表示（対象一覧 + 件数）
+→ 書き込みクレデンシャルの解決 + アカウント検証（読み取り側と不一致なら拒否）
 → 確認プロンプト（--yes でスキップ、件数 > limit なら拒否）
 → Batch Engine で StartPipelineExecution
 → 結果レポート（成功/失敗/skip 件数、失敗理由）
@@ -190,6 +191,10 @@ terraform ログ抽出（`core/logs`）:
   「InProgress スキップがどれを飛ばすか」の 2 つを決めるため、`status_ttl`（既定 10m）だけ
   古いデータで書き込みを判断させない。`--status` 指定時は全件を強制再取得、明示ターゲット時は
   その対象だけ再取得してから確認に進む。TUI の Release 画面も confirm 前に対象を再取得する
+- **書き込み先は読み取り先と同一アカウントでなければ拒否**（§10 の 1 run = 1 account）。
+  検証は確認プロンプトの**前**に行うので、`aws (write):` 行を見てから y/N を答えられる。
+  write profile の identity を検証できなかった場合も拒否する（`GetCallerIdentity` は
+  IAM 権限を要さないため、失敗はクレデンシャル自体が壊れていることを意味する）
 
 ## 5. 逐次バッチエンジン（internal/batch）
 
@@ -545,7 +550,22 @@ metrics:
 ```
 
 - プロファイルは AWS SDK 標準のクレデンシャルチェーンに委譲（ツールは認証情報を保持しない）
-- 読み取り/書き込みでプロファイルを分けたい場合に備え `write_profile`（任意、未指定なら `profile` を使用）を用意
+- 読み取り/書き込みでプロファイルを分けたい場合に備え `write_profile`
+  （任意、env `AFT_OPS_WRITE_PROFILE` / flag `--write-profile`、未指定なら `profile` を使用）を用意
+- **1 run = 1 account**: `write_profile` は「同一アカウントの別ロール」（ReadOnly と
+  Administrator など）のための設定であり、別アカウントを指すことは想定しない。
+  書き込み直前の STS 検証で読み取り側のアカウントと突き合わせ、**不一致なら exit 2 で拒否**する。
+  - この不変条件を選んだのは、危険な組み合わせの入口が 1 つではないため。
+    `--profile` は読み取り側だけを動かすので config の `write_profile` が残り、
+    同じ事故は `AFT_OPS_WRITE_PROFILE` からも config の書き間違いからも起きる。
+    フラグの上書き規則で塞ぐと最初の 1 つしか塞がらない
+  - **`--profile` は `write_profile` を書き換えない**。明示的に設定された値を黙って
+    別のアカウントへ向け直すのは、まさにこのガードが防ごうとしている種類の挙動になる。
+    両方を動かすには `--write-profile` を渡す（拒否メッセージもこれを案内する）
+  - 検証コストは 0 — 別 profile のときは元々 `GetCallerIdentity` を呼んで
+    `aws (write):` 行を出していた。突き合わせていなかっただけ
+  - `--dry-run` は書き込みクレデンシャルを解決しないためアカウント検証もできない。
+    実行時に使われる profile 名だけを「未検証」と明示して stderr に出す
 - **`aws_config_file`（任意、env `AFT_OPS_AWS_CONFIG_FILE` / flag `--aws-config-file`）**:
   profile を引く shared config file を固定する。組織ごとに config file を分けて
   `AWS_CONFIG_FILE` で切り替える運用では、設定ファイル側の `profile` は固定なのに

@@ -136,6 +136,12 @@ func (a *App) readAWSLocked(ctx context.Context) (aws.Config, error) {
 // and "which account am I about to change?" is not a question to answer from
 // a day-old note. The extra call costs a fraction of a second on an operation
 // that already asks a human to confirm.
+//
+// A distinct write profile must land in the account the run is reading. That
+// pairing is what write_profile is for — a different role (read-only vs
+// administrator) in one account — and holding the tool to it closes every
+// route to a wrong-organization write at once: --profile moving only the read
+// side, AFT_OPS_WRITE_PROFILE, or a profile name mistyped in the config file.
 func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -149,6 +155,11 @@ func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 		a.resolveIdentityLocked(ctx, cfg, true)
 		return cfg, nil
 	}
+	// Resolve the read side first even if no command has needed it yet: the
+	// account it lands in is the value the write is checked against.
+	if _, err := a.readAWSLocked(ctx); err != nil {
+		return aws.Config{}, err
+	}
 	if a.writeCfg != nil {
 		return *a.writeCfg, nil
 	}
@@ -156,17 +167,48 @@ func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 	if err != nil {
 		return aws.Config{}, err
 	}
-	a.writeCfg = &cfg
 	// A distinct write profile is a distinct set of credentials: say which
-	// account they land in before anything is triggered.
+	// account they land in before anything is triggered. GetCallerIdentity
+	// needs no IAM permission, so a failure here is the credentials being
+	// broken rather than a missing grant — there is nothing to write with.
 	out, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "warning: could not resolve the write profile's identity:", err)
-		return cfg, nil
+		return aws.Config{}, fmt.Errorf(
+			"refusing to write: could not resolve the identity of write profile %s: %w", wp, err)
 	}
+	writeAcct := aws.ToString(out.Account)
+	if writeAcct != a.accountID {
+		// The read account may have come from the 24h identity record, which
+		// would make it the stale half of this comparison. Re-verify before
+		// refusing: the call is worth it on the path that stops an operator,
+		// and it reprints the read banner directly above the refusal.
+		if rcfg, err := a.readAWSLocked(ctx); err == nil {
+			a.resolveIdentityLocked(ctx, rcfg, true)
+		}
+	}
+	if writeAcct != a.accountID {
+		return aws.Config{}, crossAccountWriteError(a.accountID, a.profileLabel(), writeAcct, wp)
+	}
+	a.writeCfg = &cfg
 	fmt.Fprintf(os.Stderr, "aws (write): account %s · region %s · profile %s%s\n",
-		aws.ToString(out.Account), cfg.Region, wp, a.awsConfigFileNote())
+		writeAcct, cfg.Region, wp, a.awsConfigFileNote())
 	return cfg, nil
+}
+
+// crossAccountWriteError reports a write profile that lands outside the
+// account the run is reading. It names both sides because the operator's next
+// move depends on which one is wrong: the read profile they passed, or the
+// write profile still coming from the config file.
+func crossAccountWriteError(readAcct, readProfile, writeAcct, writeProfile string) error {
+	if readAcct == "" {
+		return fmt.Errorf("refusing to write: write profile %s resolves to account %s, "+
+			"but the account this run is reading could not be determined",
+			writeProfile, writeAcct)
+	}
+	return fmt.Errorf("refusing to write: write profile %s resolves to account %s, "+
+		"but this run is reading account %s (profile %s)\n"+
+		"a run operates on one account; pass --write-profile to point the write at the same one",
+		writeProfile, writeAcct, readAcct, readProfile)
 }
 
 // CacheStore returns the profile/region-scoped cache.
