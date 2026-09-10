@@ -20,7 +20,11 @@ exit 0
           "main"
         ],
         "file_paths": [
-          "payments-stg/terraform/*.tf"
+          "payments-stg/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "fetched_at": "<TIMESTAMP>"
@@ -31,7 +35,8 @@ exit 0
       "account_name": "payments-dev",
       "state": "drift",
       "reasons": [
-        "file_paths"
+        "file_paths",
+        "file_path_excludes"
       ],
       "expected": {
         "provider_type": "CodeStarSourceConnection",
@@ -40,7 +45,11 @@ exit 0
           "main"
         ],
         "file_paths": [
-          "payments-dev/terraform/*.tf"
+          "payments-dev/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "actual": [
@@ -51,7 +60,7 @@ exit 0
             "main"
           ],
           "file_paths": [
-            "payments/terraform/*.tf"
+            "payments-dev/terraform/*.tf"
           ]
         }
       ],
@@ -69,7 +78,11 @@ exit 0
           "main"
         ],
         "file_paths": [
-          "payments-prod/terraform/*.tf"
+          "payments-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "actual": [
@@ -80,7 +93,11 @@ exit 0
             "main"
           ],
           "file_paths": [
-            "payments-prod/terraform/*.tf"
+            "payments-prod/**"
+          ],
+          "file_path_excludes": [
+            "**/*.md",
+            "**/.terraform-docs.yml"
           ]
         }
       ],

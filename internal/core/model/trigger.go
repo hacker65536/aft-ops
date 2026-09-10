@@ -70,10 +70,12 @@ const (
 	ReasonSourceAction      = "source_action"
 	ReasonBranches          = "branches"
 	ReasonFilePaths         = "file_paths"
+	ReasonFilePathExcludes  = "file_path_excludes"
 	ReasonPullRequestFilter = "pull_request_filter"
 	// ReasonExtraFilters covers every filter the expected shape has no slot
-	// for at all: branch/path excludes, tag filters, and push filters beyond
-	// the first.
+	// for at all: branch excludes, tag filters, and push filters beyond the
+	// first. File-path excludes are not among them — they are part of the
+	// expectation, and drift in them has its own reason.
 	ReasonExtraFilters = "extra_filters"
 )
 
@@ -105,14 +107,20 @@ type PushTrigger struct {
 // TriggerPolicy derives the trigger an account's customizations pipeline
 // should carry.
 //
-// The file path is a template over the account's account_customizations_name
+// The file paths are templates over the account's account_customizations_name
 // rather than a per-account setting: a fleet of several hundred pipelines
 // would otherwise need several hundred lines of configuration, all of them
 // duplicating what AFT's own metadata table already says.
+//
+// Excludes are part of the expectation rather than an exception to it. A
+// policy that watches a whole account directory needs them to keep
+// documentation from starting builds, and a pipeline that has the includes
+// but not the excludes is not the pipeline the policy describes.
 type TriggerPolicy struct {
 	SourceAction     string
 	Branch           string
-	FilePathTemplate string
+	FilePathIncludes []string
+	FilePathExcludes []string
 }
 
 // Expect returns the trigger a pipeline whose account has the given
@@ -121,17 +129,46 @@ type TriggerPolicy struct {
 // to filter on, so its pipeline is judged as Unknown rather than as drifted.
 func (p TriggerPolicy) Expect(customizationsName string) (PushTrigger, bool) {
 	name := strings.TrimSpace(customizationsName)
-	if name == "" || p.SourceAction == "" || p.Branch == "" || p.FilePathTemplate == "" {
+	if name == "" || p.SourceAction == "" || p.Branch == "" || len(p.FilePathIncludes) == 0 {
 		return PushTrigger{}, false
 	}
 	return PushTrigger{
-		ProviderType: TriggerProviderType,
-		SourceAction: p.SourceAction,
-		Branches:     []string{p.Branch},
-		FilePaths: []string{
-			strings.ReplaceAll(p.FilePathTemplate, CustomizationsNamePlaceholder, name),
-		},
+		ProviderType:     TriggerProviderType,
+		SourceAction:     p.SourceAction,
+		Branches:         []string{p.Branch},
+		FilePaths:        expandPatterns(p.FilePathIncludes, name),
+		FilePathExcludes: expandPatterns(p.FilePathExcludes, name),
 	}, true
+}
+
+// expandPatterns substitutes one account's customizations name into every
+// pattern. Excludes go through it too: an exclude scoped to the account
+// directory ("{customizations_name}/docs/**") is as reasonable as a
+// repository-wide one ("**/*.md").
+func expandPatterns(patterns []string, name string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+	out := make([]string, len(patterns))
+	for i, pattern := range patterns {
+		out[i] = strings.ReplaceAll(pattern, CustomizationsNamePlaceholder, name)
+	}
+	return out
+}
+
+// sameSet reports whether two pattern lists say the same thing. Order is not
+// part of what CodePipeline evaluates — every include is OR'd against every
+// changed file — so reordering the configured patterns is not drift, and a
+// nil list and an empty one are the same absence.
+func sameSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	a := slices.Clone(got)
+	b := slices.Clone(want)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
 
 // TriggerSummary is one row of `pipeline triggers`: an account pipeline, the
@@ -176,20 +213,22 @@ func ClassifyTrigger(expected *PushTrigger, actual []PushTrigger) (TriggerState,
 	if got.SourceAction != expected.SourceAction {
 		reasons = append(reasons, ReasonSourceAction)
 	}
-	if !slices.Equal(got.Branches, expected.Branches) {
+	if !sameSet(got.Branches, expected.Branches) {
 		reasons = append(reasons, ReasonBranches)
 	}
-	if !slices.Equal(got.FilePaths, expected.FilePaths) {
+	if !sameSet(got.FilePaths, expected.FilePaths) {
 		reasons = append(reasons, ReasonFilePaths)
+	}
+	if !sameSet(got.FilePathExcludes, expected.FilePathExcludes) {
+		reasons = append(reasons, ReasonFilePathExcludes)
 	}
 	if got.PullRequest {
 		reasons = append(reasons, ReasonPullRequestFilter)
 	}
-	// Excludes, tag filters and further push filters have no place in the
-	// expected shape, so any value at all is a difference. They share one
+	// Branch excludes, tag filters and further push filters have no place in
+	// the expected shape, so any value at all is a difference. They share one
 	// reason: whichever it is, the operator has to go read the actual trigger.
-	if len(got.BranchExcludes) > 0 || len(got.FilePathExcludes) > 0 ||
-		len(got.Tags) > 0 || got.ExtraPushFilters > 0 {
+	if len(got.BranchExcludes) > 0 || len(got.Tags) > 0 || got.ExtraPushFilters > 0 {
 		reasons = append(reasons, ReasonExtraFilters)
 	}
 	if len(reasons) == 0 {

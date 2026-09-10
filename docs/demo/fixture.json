@@ -276,7 +276,11 @@
           "main"
         ],
         "file_paths": [
-          "platform-prod/terraform/*.tf"
+          "platform-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -502,7 +506,11 @@
           "main"
         ],
         "file_paths": [
-          "platform-stg/terraform/*.tf"
+          "platform-stg/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -728,7 +736,11 @@
           "main"
         ],
         "file_paths": [
-          "platform-dev/terraform/*.tf"
+          "platform-dev/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -848,7 +860,11 @@
           "main"
         ],
         "file_paths": [
-          "payments-prod/terraform/*.tf"
+          "payments-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -1397,7 +1413,7 @@
           "main"
         ],
         "file_paths": [
-          "payments/terraform/*.tf"
+          "payments-dev/terraform/*.tf"
         ]
       },
       "executions": [
@@ -1570,7 +1586,11 @@
           "main"
         ],
         "file_paths": [
-          "data-lake-prod/terraform/*.tf"
+          "data-lake-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -1796,7 +1816,11 @@
           "main"
         ],
         "file_paths": [
-          "data-lake-stg/terraform/*.tf"
+          "data-lake-stg/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -2022,7 +2046,11 @@
           "main"
         ],
         "file_paths": [
-          "analytics-prod/terraform/*.tf"
+          "analytics-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -2195,7 +2223,11 @@
           "main"
         ],
         "file_paths": [
-          "analytics-dev/terraform/*.tf"
+          "analytics-dev/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -2368,7 +2400,11 @@
           "main"
         ],
         "file_paths": [
-          "security-audit/terraform/*.tf"
+          "security-audit/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -2594,7 +2630,11 @@
           "main"
         ],
         "file_paths": [
-          "security-tooling/terraform/*.tf"
+          "security-tooling/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -2714,7 +2754,11 @@
           "main"
         ],
         "file_paths": [
-          "log-archive/terraform/*.tf"
+          "log-archive/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -2887,7 +2931,11 @@
           "main"
         ],
         "file_paths": [
-          "network-hub-prod/terraform/*.tf"
+          "network-hub-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -3060,7 +3108,11 @@
           "main"
         ],
         "file_paths": [
-          "network-hub-dev/terraform/*.tf"
+          "network-hub-dev/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -3329,7 +3381,11 @@
           "main"
         ],
         "file_paths": [
-          "shared-services/terraform/*.tf"
+          "shared-services/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -3449,7 +3505,11 @@
           "main"
         ],
         "file_paths": [
-          "identity-prod/terraform/*.tf"
+          "identity-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -3622,7 +3682,11 @@
           "main"
         ],
         "file_paths": [
-          "identity-stg/terraform/*.tf"
+          "identity-stg/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -3742,7 +3806,11 @@
           "main"
         ],
         "file_paths": [
-          "billing-ops/terraform/*.tf"
+          "billing-ops/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -3915,7 +3983,11 @@
           "main"
         ],
         "file_paths": [
-          "backup-vault/terraform/*.tf"
+          "backup-vault/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -4088,7 +4160,11 @@
           "main"
         ],
         "file_paths": [
-          "ml-training/terraform/*.tf"
+          "ml-training/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -4314,7 +4390,11 @@
           "main"
         ],
         "file_paths": [
-          "ml-serving/terraform/*.tf"
+          "ml-serving/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -4540,7 +4620,11 @@
           "main"
         ],
         "file_paths": [
-          "edge-cdn/terraform/*.tf"
+          "edge-cdn/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -4713,7 +4797,11 @@
           "main"
         ],
         "file_paths": [
-          "api-gateway-prod/terraform/*.tf"
+          "api-gateway-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -4833,7 +4921,11 @@
           "main"
         ],
         "file_paths": [
-          "api-gateway-stg/terraform/*.tf"
+          "api-gateway-stg/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5006,7 +5098,11 @@
           "main"
         ],
         "file_paths": [
-          "search-prod/terraform/*.tf"
+          "search-prod/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5126,7 +5222,11 @@
           "main"
         ],
         "file_paths": [
-          "search-dev/terraform/*.tf"
+          "search-dev/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5296,7 +5396,11 @@
           "main"
         ],
         "file_paths": [
-          "notifications/terraform/*.tf"
+          "notifications/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5416,7 +5520,11 @@
           "main"
         ],
         "file_paths": [
-          "batch-jobs/terraform/*.tf"
+          "batch-jobs/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5693,7 +5801,11 @@
           "main"
         ],
         "file_paths": [
-          "reporting/terraform/*.tf"
+          "reporting/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5866,7 +5978,11 @@
           "main"
         ],
         "file_paths": [
-          "crm-integration/terraform/*.tf"
+          "crm-integration/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -5986,7 +6102,11 @@
           "main"
         ],
         "file_paths": [
-          "partner-portal/terraform/*.tf"
+          "partner-portal/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -6106,7 +6226,11 @@
           "main"
         ],
         "file_paths": [
-          "mobile-backend/terraform/*.tf"
+          "mobile-backend/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -6332,7 +6456,11 @@
           "main"
         ],
         "file_paths": [
-          "web-frontend/terraform/*.tf"
+          "web-frontend/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -6558,7 +6686,11 @@
           "main"
         ],
         "file_paths": [
-          "sandbox-alice/terraform/*.tf"
+          "sandbox-alice/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -6784,7 +6916,11 @@
           "main"
         ],
         "file_paths": [
-          "sandbox-bob/terraform/*.tf"
+          "sandbox-bob/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -6904,7 +7040,11 @@
           "main"
         ],
         "file_paths": [
-          "sandbox-carol/terraform/*.tf"
+          "sandbox-carol/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -7130,7 +7270,11 @@
           "main"
         ],
         "file_paths": [
-          "qa-automation/terraform/*.tf"
+          "qa-automation/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -7303,7 +7447,11 @@
           "main"
         ],
         "file_paths": [
-          "perf-testing/terraform/*.tf"
+          "perf-testing/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -7581,7 +7729,11 @@
           "main"
         ],
         "file_paths": [
-          "dr-standby/terraform/*.tf"
+          "dr-standby/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [
@@ -7705,7 +7857,11 @@
           "main"
         ],
         "file_paths": [
-          "compliance-reports/terraform/*.tf"
+          "compliance-reports/**"
+        ],
+        "file_path_excludes": [
+          "**/*.md",
+          "**/.terraform-docs.yml"
         ]
       },
       "executions": [

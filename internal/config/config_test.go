@@ -327,6 +327,8 @@ func TestEveryConfigKeyIsSettableFromTheEnvironment(t *testing.T) {
 			return "1.5", 1.5
 		case f.Kind() == reflect.Bool:
 			return "false", false
+		case f.Kind() == reflect.Slice && f.Type().Elem().Kind() == reflect.String:
+			return "one/**, two/**", []string{"one/**", "two/**"}
 		}
 		t.Fatalf("no sample for kind %s; teach setFromString and this test about it", f.Kind())
 		return "", nil
@@ -348,7 +350,10 @@ func TestEveryConfigKeyIsSettableFromTheEnvironment(t *testing.T) {
 				t.Fatalf("applyEnv: %v", err)
 			}
 			got := fieldAt(t, &cfg, path).Interface()
-			if got != want {
+			// DeepEqual rather than ==: the list-valued keys are not
+			// comparable, and a panic here would read as a broken test
+			// rather than as the unsettable field it is meant to catch.
+			if !reflect.DeepEqual(got, want) {
 				t.Errorf("%s = %v (%T), want %v", EnvName(path), got, got, want)
 			}
 		})
@@ -358,8 +363,66 @@ func TestEveryConfigKeyIsSettableFromTheEnvironment(t *testing.T) {
 // Every key means every key: a count that drops is a field that stopped being
 // reachable, which is exactly the drift the derived names exist to prevent.
 func TestConfigKeyCount(t *testing.T) {
-	if got := len(configPaths(t)); got != 26 {
-		t.Errorf("walked %d config keys, want 26 — if a field was added or "+
-			"removed on purpose, update this count and the README table", got)
+	if got := len(configPaths(t)); got != 27 {
+		t.Errorf("walked %d config keys, want 27 — if a field was added or "+
+			"removed on purpose, update this count and the sample config in "+
+			"the README", got)
+	}
+}
+
+// A list key takes a comma-separated environment value, and the whole list is
+// replaced rather than appended to — an operator who names two patterns gets
+// exactly those two, not those two plus the defaults.
+func TestEnvListValuesReplaceTheDefault(t *testing.T) {
+	cfg := Default()
+	t.Setenv(EnvName("trigger.file_path_excludes"), " **/*.md , **/LICENSE ")
+	if err := applyEnv(&cfg); err != nil {
+		t.Fatalf("applyEnv: %v", err)
+	}
+	want := []string{"**/*.md", "**/LICENSE"}
+	if !reflect.DeepEqual(cfg.Trigger.FilePathExcludes, want) {
+		t.Errorf("excludes = %v, want %v", cfg.Trigger.FilePathExcludes, want)
+	}
+	// An empty entry is a typo (a trailing comma), not an empty pattern:
+	// CodePipeline would reject it, and a silently dropped one would leave
+	// the operator reading a list they did not write.
+	t.Setenv(EnvName("trigger.file_path_excludes"), "**/*.md,,**/LICENSE")
+	if err := applyEnv(&cfg); err == nil {
+		t.Error("an empty list entry must be an error")
+	}
+}
+
+// The trigger policy is what every pipeline is judged against, so a policy
+// CodePipeline could not accept has to fail at load rather than at the report.
+func TestValidateRejectsUnusableTriggerPolicies(t *testing.T) {
+	long := strings.Repeat("a", maxTriggerPatternLen+1)
+	cases := []struct {
+		name string
+		edit func(*Config)
+	}{
+		{"no includes", func(c *Config) { c.Trigger.FilePathIncludes = nil }},
+		{"empty include", func(c *Config) { c.Trigger.FilePathIncludes = []string{"  "} }},
+		{"empty exclude", func(c *Config) { c.Trigger.FilePathExcludes = []string{""} }},
+		{"too many includes", func(c *Config) {
+			c.Trigger.FilePathIncludes = make([]string, maxTriggerPatterns+1)
+			for i := range c.Trigger.FilePathIncludes {
+				c.Trigger.FilePathIncludes[i] = "a/**"
+			}
+		}},
+		{"pattern too long", func(c *Config) { c.Trigger.FilePathExcludes = []string{long} }},
+		{"blank source action", func(c *Config) { c.Trigger.SourceAction = " " }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := Default()
+			c.edit(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Error("Validate() = nil, want an error")
+			}
+		})
+	}
+	def := Default()
+	if err := def.Validate(); err != nil {
+		t.Errorf("the defaults must validate: %v", err)
 	}
 }

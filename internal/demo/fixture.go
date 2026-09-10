@@ -109,10 +109,11 @@ type Pipeline struct {
 // rather than derived from the account so that a fixture can hold a drifted
 // one (a file path pointing at the wrong directory) next to correct ones.
 type Trigger struct {
-	ProviderType string   `json:"provider_type,omitempty"` // default CodeStarSourceConnection
-	SourceAction string   `json:"source_action"`
-	Branches     []string `json:"branches"`
-	FilePaths    []string `json:"file_paths"`
+	ProviderType     string   `json:"provider_type,omitempty"` // default CodeStarSourceConnection
+	SourceAction     string   `json:"source_action"`
+	Branches         []string `json:"branches"`
+	FilePaths        []string `json:"file_paths"`
+	FilePathExcludes []string `json:"file_path_excludes,omitempty"`
 }
 
 // Name returns the CodePipeline name AFT would give this account.

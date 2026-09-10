@@ -132,9 +132,9 @@ calls for, and report the difference.
 
 The expectation is derived, not configured per account: AFT's metadata table
 records each account's account_customizations_name, and the file-path filter
-follows from it (trigger.file_path_template). A fleet of several hundred
-pipelines therefore needs no per-account setting, and the expectation cannot
-drift away from what AFT itself recorded.
+follows from it (trigger.file_path_includes and trigger.file_path_excludes).
+A fleet of several hundred pipelines therefore needs no per-account setting,
+and the expectation cannot drift away from what AFT itself recorded.
 
 This matters because AFT's own terraform template declares no trigger at all,
 so any trigger is out-of-band: re-running aft-create-pipeline — which an AFT
@@ -226,7 +226,8 @@ func (a *App) triggerPolicy() model.TriggerPolicy {
 	return model.TriggerPolicy{
 		SourceAction:     a.Cfg.Trigger.SourceAction,
 		Branch:           a.Cfg.Trigger.Branch,
-		FilePathTemplate: a.Cfg.Trigger.FilePathTemplate,
+		FilePathIncludes: a.Cfg.Trigger.FilePathIncludes,
+		FilePathExcludes: a.Cfg.Trigger.FilePathExcludes,
 	}
 }
 

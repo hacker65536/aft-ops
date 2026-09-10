@@ -244,7 +244,12 @@ func styleTriggerState(s model.TriggerState, color bool) string {
 }
 
 // triggerDetail is the one line that says what to do about a row: the file
-// path being watched when all is well, and what differs when it is not.
+// paths being watched when all is well, and what differs when it is not.
+//
+// The ok row shows the includes only. The excludes are the same two or three
+// patterns on every row of the fleet, so spending the column on them would
+// push the account-specific part off the end of the line; they are in the
+// JSON output, and in the drift row whenever they are what differs.
 func triggerDetail(t model.TriggerSummary) string {
 	switch t.State {
 	case model.TriggerOK:
@@ -260,12 +265,18 @@ func triggerDetail(t model.TriggerSummary) string {
 	// full before/after of each one is in the JSON output; a table row that
 	// wrapped over three lines would stop the table being scannable, which is
 	// the only thing it is better at than the JSON.
+	//
+	// The budget covers the reason list plus a diff rather than the reason
+	// list alone: a pipeline on the pre-migration pattern names two reasons
+	// (file_paths and file_path_excludes), and a shorter cut would spend the
+	// line on the names and drop the "want", which is the part that says what
+	// to do about the row.
 	parts := make([]string, 0, 2)
 	parts = append(parts, strings.Join(t.Reasons, ","))
 	if d := triggerDiff(t); d != "" {
 		parts = append(parts, d)
 	}
-	return truncate(strings.Join(parts, ": "), 80)
+	return truncate(strings.Join(parts, ": "), 100)
 }
 
 // triggerDiff renders the first comparable difference as "got X, want Y".
@@ -278,6 +289,8 @@ func triggerDiff(t model.TriggerSummary) string {
 		switch reason {
 		case model.ReasonFilePaths:
 			return diffLine(got.FilePaths, want.FilePaths)
+		case model.ReasonFilePathExcludes:
+			return diffLine(got.FilePathExcludes, want.FilePathExcludes)
 		case model.ReasonBranches:
 			return diffLine(got.Branches, want.Branches)
 		case model.ReasonSourceAction:

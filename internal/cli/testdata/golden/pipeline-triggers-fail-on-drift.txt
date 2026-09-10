@@ -3,8 +3,8 @@ exit 1
 --- stdout ---
 ACCOUNT NAME   ACCOUNT ID    TRIGGER  DETAIL
 payments-stg   100000000005  missing  no trigger configured
-payments-dev   100000000006  drift    file_paths: got payments/terraform/*.tf, want payments-dev/terraform/*.tf
-payments-prod  100000000004  ok       payments-prod/terraform/*.tf
+payments-dev   100000000006  drift    file_paths,file_path_excludes: got payments-dev/terraform/*.tf, want payments-dev/**
+payments-prod  100000000004  ok       payments-prod/**
 --- stderr ---
 aws: account 100000000000 · region ap-northeast-1 · profile aft-demo  (demo mode: fixture.json, no AWS calls)
 total=3 ok=1 missing=1 drift=1

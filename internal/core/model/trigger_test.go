@@ -8,7 +8,8 @@ import (
 var testPolicy = TriggerPolicy{
 	SourceAction:     "aft-account-customizations",
 	Branch:           "main",
-	FilePathTemplate: "{customizations_name}/terraform/*.tf",
+	FilePathIncludes: []string{"{customizations_name}/**"},
+	FilePathExcludes: []string{"**/*.md", "{customizations_name}/docs/**"},
 }
 
 // The expectation is derived from the account's own customizations name, so
@@ -22,8 +23,13 @@ func TestTriggerPolicyExpect(t *testing.T) {
 	if want.ProviderType != TriggerProviderType {
 		t.Errorf("provider = %q, want %q", want.ProviderType, TriggerProviderType)
 	}
-	if !slices.Equal(want.FilePaths, []string{"payments-prod/terraform/*.tf"}) {
+	if !slices.Equal(want.FilePaths, []string{"payments-prod/**"}) {
 		t.Errorf("file paths = %v", want.FilePaths)
+	}
+	// The placeholder is substituted in the excludes too, so an exclude can
+	// be scoped to the account directory as well as to the repository.
+	if !slices.Equal(want.FilePathExcludes, []string{"**/*.md", "payments-prod/docs/**"}) {
+		t.Errorf("file path excludes = %v", want.FilePathExcludes)
 	}
 	if !slices.Equal(want.Branches, []string{"main"}) {
 		t.Errorf("branches = %v", want.Branches)
@@ -41,6 +47,19 @@ func TestTriggerPolicyExpectWithoutName(t *testing.T) {
 	empty := TriggerPolicy{}
 	if _, ok := empty.Expect("payments-prod"); ok {
 		t.Error("an empty policy must not produce an expectation")
+	}
+	// Excludes are optional; includes are what makes an expectation.
+	noExcludes := TriggerPolicy{
+		SourceAction:     testPolicy.SourceAction,
+		Branch:           testPolicy.Branch,
+		FilePathIncludes: []string{"{customizations_name}/**"},
+	}
+	got, ok := noExcludes.Expect("payments-prod")
+	if !ok {
+		t.Fatal("a policy without excludes must still produce an expectation")
+	}
+	if got.FilePathExcludes != nil {
+		t.Errorf("file path excludes = %v, want none", got.FilePathExcludes)
 	}
 }
 
@@ -61,6 +80,7 @@ func TestClassifyTrigger(t *testing.T) {
 		got := want
 		got.Branches = slices.Clone(want.Branches)
 		got.FilePaths = slices.Clone(want.FilePaths)
+		got.FilePathExcludes = slices.Clone(want.FilePathExcludes)
 		f(&got)
 		return []PushTrigger{got}
 	}
@@ -81,8 +101,23 @@ func TestClassifyTrigger(t *testing.T) {
 			TriggerDrift, []string{ReasonSourceAction}},
 		{"wrong branch", mutate(func(p *PushTrigger) { p.Branches = []string{"master"} }),
 			TriggerDrift, []string{ReasonBranches}},
-		{"wrong file path", mutate(func(p *PushTrigger) { p.FilePaths = []string{"payments/terraform/*.tf"} }),
+		{"wrong file path", mutate(func(p *PushTrigger) { p.FilePaths = []string{"payments/**"} }),
 			TriggerDrift, []string{ReasonFilePaths}},
+		// The pattern the fleet is migrating away from: it looks like a
+		// working trigger and never fires for a local module.
+		{"pre-migration file path", mutate(func(p *PushTrigger) {
+			p.FilePaths = []string{"payments-prod/terraform/*.tf"}
+		}), TriggerDrift, []string{ReasonFilePaths}},
+		{"missing excludes", mutate(func(p *PushTrigger) { p.FilePathExcludes = nil }),
+			TriggerDrift, []string{ReasonFilePathExcludes}},
+		{"extra exclude", mutate(func(p *PushTrigger) {
+			p.FilePathExcludes = append(p.FilePathExcludes, "**/*.txt")
+		}), TriggerDrift, []string{ReasonFilePathExcludes}},
+		// Order is not something CodePipeline evaluates, so reordering the
+		// configured patterns must not read as drift.
+		{"reordered excludes", mutate(func(p *PushTrigger) {
+			slices.Reverse(p.FilePathExcludes)
+		}), TriggerOK, nil},
 		{"pull request filter", mutate(func(p *PushTrigger) { p.PullRequest = true }),
 			TriggerDrift, []string{ReasonPullRequestFilter}},
 		{"branch excludes", mutate(func(p *PushTrigger) { p.BranchExcludes = []string{"tmp/*"} }),

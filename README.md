@@ -133,7 +133,10 @@ Every key can be set from the environment, and the variable's name is derived
 from the key's path — `AFT_OPS_` plus the path in upper snake case, so
 `cache.status_ttl` is `AFT_OPS_CACHE_STATUS_TTL` and `profile` is
 `AFT_OPS_PROFILE`. There is no list to consult and no key left out. A value
-that does not parse stops the run rather than being ignored.
+that does not parse stops the run rather than being ignored. A list-valued key
+takes a comma-separated value
+(`AFT_OPS_TRIGGER_FILE_PATH_EXCLUDES='**/*.md,**/LICENSE'`), and replaces the
+list rather than adding to it.
 
 ```yaml
 profile: my-aft-management-profile
@@ -169,12 +172,17 @@ release:
   skip_in_progress: true
 
 # The push trigger `pipeline triggers` expects each account pipeline to carry.
-# There is no per-account entry: file_path_template is expanded with that
-# account's own account_customizations_name from AFT's metadata table.
+# There is no per-account entry: every pattern is expanded with that account's
+# own account_customizations_name from AFT's metadata table. At most 8 patterns
+# each, 255 characters per pattern — CodePipeline's own limits.
 trigger:
   source_action: aft-account-customizations
   branch: main
-  file_path_template: "{customizations_name}/terraform/*.tf"
+  file_path_includes:
+    - "{customizations_name}/**"
+  file_path_excludes:
+    - "**/*.md"
+    - "**/.terraform-docs.yml"
 
 tui:
   poll_interval: 30s     # auto-refresh of running pipelines (also --watch's default)
@@ -224,8 +232,8 @@ rebuilding a CodeConnections connection, and nothing announces it.
 ```
 ACCOUNT NAME   ACCOUNT ID    TRIGGER  DETAIL
 payments-stg   100000000005  missing  no trigger configured
-payments-dev   100000000006  drift    file_paths: got payments/terraform/*.tf, want payments-dev/terraform/*.tf
-payments-prod  100000000004  ok       payments-prod/terraform/*.tf
+payments-dev   100000000006  drift    file_paths,file_path_excludes: got payments-dev/terraform/*.tf, want payments-dev/**
+payments-prod  100000000004  ok       payments-prod/**
 ```
 
 Rows are ordered by what needs attention, and `--fail-on-drift` turns the
@@ -233,11 +241,23 @@ report into a check a scheduled job can run.
 
 The expectation is derived rather than configured per account: AFT records each
 account's `account_customizations_name` in `aft-request-metadata`, and the
-file-path filter follows from it via `trigger.file_path_template`. Several
-hundred pipelines are therefore covered by three configuration lines, and the
-expectation cannot drift away from what AFT itself recorded. An account with no
-customizations name is reported as `unknown` — not `ok`, because a report that
-could not judge a pipeline must not read as a clean bill of health.
+file-path filter follows from it via `trigger.file_path_includes` and
+`trigger.file_path_excludes`. Several hundred pipelines are therefore covered
+by a handful of configuration lines, and the expectation cannot drift away from
+what AFT itself recorded. An account with no customizations name is reported as
+`unknown` — not `ok`, because a report that could not judge a pipeline must not
+read as a clean bill of health.
+
+The default expectation watches the whole account directory and excludes
+documentation, rather than listing the file types worth building. This is not a
+style preference: CodePipeline's `*` does not cross a directory separator, so a
+narrower pattern like `{customizations_name}/terraform/*.tf` stops firing the
+moment an account grows a local module directory — and it stops firing
+silently, because a trigger that matches nothing is indistinguishable from a
+repository nobody pushed to. Excluding is the safer direction, and it costs
+nothing in precision: CodePipeline evaluates each changed file on its own, so a
+commit that touches both a `.tf` file and a `README` still starts the pipeline
+while a documentation-only commit does not.
 
 This is deliberately read-only. Making the triggers permanent is a change to
 how the pipelines are built, not something to reconcile from outside; a tool

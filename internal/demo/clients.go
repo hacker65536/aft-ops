@@ -213,8 +213,11 @@ func (c *PipelineClient) GetPipeline(ctx context.Context,
 			GitConfiguration: &cptypes.GitConfiguration{
 				SourceActionName: aws.String(t.SourceAction),
 				Push: []cptypes.GitPushFilter{{
-					Branches:  &cptypes.GitBranchFilterCriteria{Includes: t.Branches},
-					FilePaths: &cptypes.GitFilePathFilterCriteria{Includes: t.FilePaths},
+					Branches: &cptypes.GitBranchFilterCriteria{Includes: t.Branches},
+					FilePaths: &cptypes.GitFilePathFilterCriteria{
+						Includes: t.FilePaths,
+						Excludes: t.FilePathExcludes,
+					},
 				}},
 			},
 		}}

@@ -108,17 +108,36 @@ type Release struct {
 // Trigger describes the push trigger an AFT account customizations pipeline
 // is expected to carry, which `pipeline triggers` compares reality against.
 //
-// There is no per-account setting here on purpose. FilePathTemplate is
+// There is no per-account setting here on purpose. Every file-path pattern is
 // expanded with the account's own account_customizations_name from AFT's
-// metadata table, so a fleet of several hundred pipelines is covered by three
-// lines instead of several hundred — and the expectation cannot drift away
-// from what AFT itself recorded. The defaults are the shape AFT's
-// customizations repository layout implies.
+// metadata table, so a fleet of several hundred pipelines is covered by a
+// handful of lines instead of several hundred — and the expectation cannot
+// drift away from what AFT itself recorded.
+//
+// The defaults watch the whole account directory and exclude documentation,
+// rather than listing the file types worth building. CodePipeline's `*` does
+// not cross a directory separator, so a pattern like
+// "{customizations_name}/terraform/*.tf" stops firing the moment an account
+// grows a local module directory — silently, because a trigger that does not
+// match looks exactly like a repository nobody pushed to. Excluding is the
+// safer direction: CodePipeline evaluates each changed file on its own, so a
+// commit touching both a .tf file and a README still starts the pipeline,
+// while a documentation-only commit does not.
 type Trigger struct {
-	SourceAction     string `yaml:"source_action"`
-	Branch           string `yaml:"branch"`
-	FilePathTemplate string `yaml:"file_path_template"`
+	SourceAction string `yaml:"source_action"`
+	Branch       string `yaml:"branch"`
+	// FilePathIncludes and FilePathExcludes are CodePipeline's includes and
+	// excludes for the push filter's file paths, and carry its limits: at
+	// most 8 patterns each, at most 255 characters per pattern.
+	FilePathIncludes []string `yaml:"file_path_includes"`
+	FilePathExcludes []string `yaml:"file_path_excludes"`
 }
+
+// CodePipeline's quotas for one push filter's file-path patterns.
+const (
+	maxTriggerPatterns   = 8
+	maxTriggerPatternLen = 255
+)
 
 type TUI struct {
 	PollInterval Duration `yaml:"poll_interval"`
@@ -159,7 +178,8 @@ func Default() Config {
 		Trigger: Trigger{
 			SourceAction:     "aft-account-customizations",
 			Branch:           "main",
-			FilePathTemplate: "{customizations_name}/terraform/*.tf",
+			FilePathIncludes: []string{"{customizations_name}/**"},
+			FilePathExcludes: []string{"**/*.md", "**/.terraform-docs.yml"},
 		},
 		TUI:     TUI{PollInterval: Duration(30 * time.Second)},
 		Metrics: Metrics{Enabled: true, Dir: DefaultMetricsDir(), KeepRuns: 100},
@@ -229,15 +249,40 @@ func (c *Config) Validate() error {
 	}
 	// An empty trigger key cannot be judged against: it makes every pipeline
 	// report "unknown", which reads as a broken tool rather than as the
-	// unset value it is. All three default to non-empty, so reaching this
-	// means someone blanked one out.
+	// unset value it is. Everything here defaults to non-empty, so reaching
+	// one of these means someone blanked it out.
 	for _, kv := range []struct{ key, value string }{
 		{"trigger.source_action", c.Trigger.SourceAction},
 		{"trigger.branch", c.Trigger.Branch},
-		{"trigger.file_path_template", c.Trigger.FilePathTemplate},
 	} {
 		if strings.TrimSpace(kv.value) == "" {
 			return fmt.Errorf("%s must not be empty", kv.key)
+		}
+	}
+	if len(c.Trigger.FilePathIncludes) == 0 {
+		return errors.New("trigger.file_path_includes must list at least one pattern")
+	}
+	// CodePipeline's own quotas, checked here so a policy it would reject
+	// fails at load rather than at whatever call first carries it.
+	for _, kv := range []struct {
+		key      string
+		patterns []string
+	}{
+		{"trigger.file_path_includes", c.Trigger.FilePathIncludes},
+		{"trigger.file_path_excludes", c.Trigger.FilePathExcludes},
+	} {
+		if len(kv.patterns) > maxTriggerPatterns {
+			return fmt.Errorf("%s takes at most %d patterns (got %d)",
+				kv.key, maxTriggerPatterns, len(kv.patterns))
+		}
+		for _, pattern := range kv.patterns {
+			if strings.TrimSpace(pattern) == "" {
+				return fmt.Errorf("%s must not contain an empty pattern", kv.key)
+			}
+			if len(pattern) > maxTriggerPatternLen {
+				return fmt.Errorf("%s pattern %q is longer than %d characters",
+					kv.key, pattern, maxTriggerPatternLen)
+			}
 		}
 	}
 	return nil
@@ -355,6 +400,26 @@ func setFromString(f reflect.Value, key, raw string) error {
 			return envErr(key, raw, "true or false")
 		}
 		f.SetBool(b)
+	case reflect.Slice:
+		// A list key takes a comma-separated value. Commas do not appear in
+		// the glob patterns these hold, and the alternative — one variable
+		// per element — would break EnvName's one-key-one-variable rule.
+		// An empty variable is indistinguishable from an unset one to
+		// applyEnv, so emptying a list is a config-file operation ("key: []").
+		if f.Type().Elem().Kind() != reflect.String {
+			return fmt.Errorf("config: %s cannot be set from the environment (%s of %s)",
+				key, f.Kind(), f.Type().Elem().Kind())
+		}
+		parts := strings.Split(raw, ",")
+		list := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				return envErr(key, raw, "a comma-separated list with no empty entries")
+			}
+			list = append(list, part)
+		}
+		f.Set(reflect.ValueOf(list).Convert(f.Type()))
 	default:
 		return fmt.Errorf("config: %s cannot be set from the environment (%s)", key, f.Kind())
 	}

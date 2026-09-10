@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -100,7 +101,9 @@ func TestUnpassedFlagsLeaveConfigUntouched(t *testing.T) {
 
 	rootFlags{}.apply(changedSet(), &cfg)
 
-	if cfg != want {
+	// reflect.DeepEqual rather than ==: Config carries list-valued keys
+	// (trigger.file_path_includes and friends), so it is not comparable.
+	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("config changed with no flags passed:\ngot  %+v\nwant %+v", cfg, want)
 	}
 }

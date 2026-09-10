@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -21,7 +22,8 @@ import (
 var triggerPolicy = model.TriggerPolicy{
 	SourceAction:     "aft-account-customizations",
 	Branch:           "main",
-	FilePathTemplate: "{customizations_name}/terraform/*.tf",
+	FilePathIncludes: []string{"{customizations_name}/**"},
+	FilePathExcludes: []string{"**/*.md"},
 }
 
 // triggerAPI serves pipeline definitions and records GetPipeline calls, so a
@@ -33,11 +35,13 @@ type triggerAPI struct {
 
 	tmu      sync.Mutex
 	getCalls map[string]int
-	// filePath overrides the file path a pipeline's trigger filters on;
-	// noTrigger makes it declare none; errNames makes GetPipeline fail.
-	filePath  map[string]string
-	noTrigger map[string]bool
-	getErrs   map[string]bool
+	// filePath overrides the file path a pipeline's trigger includes;
+	// noExcludes drops the exclude the policy expects; noTrigger makes the
+	// pipeline declare no trigger; getErrs makes GetPipeline fail.
+	filePath   map[string]string
+	noExcludes map[string]bool
+	noTrigger  map[string]bool
+	getErrs    map[string]bool
 	// maxParallel records the highest number of concurrent GetPipeline calls.
 	inFlight, maxParallel int
 }
@@ -47,6 +51,7 @@ func newTriggerAPI() *triggerAPI {
 		countingAPI: newCountingAPI(),
 		getCalls:    map[string]int{},
 		filePath:    map[string]string{},
+		noExcludes:  map[string]bool{},
 		noTrigger:   map[string]bool{},
 		getErrs:     map[string]bool{},
 	}
@@ -64,6 +69,7 @@ func (a *triggerAPI) GetPipeline(_ context.Context, in *codepipeline.GetPipeline
 	}
 	fail, none := a.getErrs[name], a.noTrigger[name]
 	path, ok := a.filePath[name]
+	bare := a.noExcludes[name]
 	a.tmu.Unlock()
 
 	// Hold the slot long enough that overlapping calls really overlap.
@@ -80,15 +86,22 @@ func (a *triggerAPI) GetPipeline(_ context.Context, in *codepipeline.GetPipeline
 	decl := &cptypes.PipelineDeclaration{Name: aws.String(name)}
 	if !none {
 		if !ok {
-			path = "acct/terraform/*.tf"
+			path = "acct/**"
+		}
+		var excludes []string
+		if !bare {
+			excludes = []string{"**/*.md"}
 		}
 		decl.Triggers = []cptypes.PipelineTriggerDeclaration{{
 			ProviderType: cptypes.PipelineTriggerProviderType(model.TriggerProviderType),
 			GitConfiguration: &cptypes.GitConfiguration{
 				SourceActionName: aws.String("aft-account-customizations"),
 				Push: []cptypes.GitPushFilter{{
-					Branches:  &cptypes.GitBranchFilterCriteria{Includes: []string{"main"}},
-					FilePaths: &cptypes.GitFilePathFilterCriteria{Includes: []string{path}},
+					Branches: &cptypes.GitBranchFilterCriteria{Includes: []string{"main"}},
+					FilePaths: &cptypes.GitFilePathFilterCriteria{
+						Includes: []string{path},
+						Excludes: excludes,
+					},
 				}},
 			},
 		}}
@@ -133,8 +146,8 @@ func triggerResolver(t *testing.T, names map[string]string) *account.Resolver {
 func TestTriggersClassifiesEachState(t *testing.T) {
 	api := newTriggerAPI()
 	api.noTrigger[p2] = true
-	api.filePath[p1] = "alpha/terraform/*.tf"
-	api.filePath[p3] = "wrong/terraform/*.tf"
+	api.filePath[p1] = "alpha/**"
+	api.filePath[p3] = "wrong/**"
 	svc := newTriggerService(api, t, batch.Config{Concurrency: 2})
 
 	resolver := triggerResolver(t, map[string]string{
@@ -198,7 +211,7 @@ func TestTriggersServesFreshFromCache(t *testing.T) {
 // cache, so an account rename is reflected without refetching a pipeline.
 func TestTriggersRejudgesCachedDefinitions(t *testing.T) {
 	api := newTriggerAPI()
-	api.filePath[p1] = "alpha/terraform/*.tf"
+	api.filePath[p1] = "alpha/**"
 	svc := newTriggerService(api, t, batch.Config{Concurrency: 1})
 	opts := TriggerOptions{Policy: triggerPolicy, TTL: time.Hour}
 
@@ -294,8 +307,10 @@ func TestPushTriggerFromDeclaration(t *testing.T) {
 					Branches: &cptypes.GitBranchFilterCriteria{
 						Includes: []string{"main"}, Excludes: []string{"tmp/*"},
 					},
-					FilePaths: &cptypes.GitFilePathFilterCriteria{Includes: []string{"a/terraform/*.tf"}},
-					Tags:      &cptypes.GitTagFilterCriteria{Includes: []string{"v*"}},
+					FilePaths: &cptypes.GitFilePathFilterCriteria{
+						Includes: []string{"a/**"}, Excludes: []string{"**/*.md"},
+					},
+					Tags: &cptypes.GitTagFilterCriteria{Includes: []string{"v*"}},
 				},
 				{}, // a second push filter the flat shape cannot hold
 			},
@@ -308,5 +323,30 @@ func TestPushTriggerFromDeclaration(t *testing.T) {
 	// silently pass as matching.
 	if got.ExtraPushFilters != 1 || len(got.BranchExcludes) != 1 || len(got.Tags) != 1 {
 		t.Errorf("dropped filters not recorded: %+v", got)
+	}
+	// File-path excludes are half of the expectation, so they have to survive
+	// the flattening rather than be inferred from the includes.
+	if !slices.Equal(got.FilePaths, []string{"a/**"}) ||
+		!slices.Equal(got.FilePathExcludes, []string{"**/*.md"}) {
+		t.Errorf("file paths = %v, excludes = %v", got.FilePaths, got.FilePathExcludes)
+	}
+}
+
+// A pipeline that watches the right paths but carries none of the excludes is
+// not the pipeline the policy describes: documentation pushes would build it.
+func TestTriggersReportsMissingExcludesAsDrift(t *testing.T) {
+	api := newTriggerAPI()
+	api.filePath[p1] = "alpha/**"
+	api.noExcludes[p1] = true
+	svc := newTriggerService(api, t, batch.Config{Concurrency: 1})
+
+	resolver := triggerResolver(t, map[string]string{"111111111111": "alpha"})
+	sums, _ := svc.Triggers(context.Background(), []string{p1}, resolver,
+		TriggerOptions{Policy: triggerPolicy, TTL: time.Hour}, nil)
+
+	if sums[0].State != model.TriggerDrift ||
+		!slices.Contains(sums[0].Reasons, model.ReasonFilePathExcludes) {
+		t.Errorf("state = %q reasons = %v, want drift on file_path_excludes",
+			sums[0].State, sums[0].Reasons)
 	}
 }

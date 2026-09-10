@@ -232,9 +232,22 @@ AFT には plan → 承認 → apply のゲートが無く（上流 issue #153 �
 設計上の要点:
 
 - **期待値はアカウントごとに設定しない。** AFT が `aft-request-metadata` に記録している
-  `account_customizations_name` から `trigger.file_path_template` で導出する。数百件の
-  フリートが設定 3 行で覆え、かつ期待値が AFT の記録からずれようがない。
+  `account_customizations_name` から `trigger.file_path_includes` /
+  `trigger.file_path_excludes` で導出する。数百件のフリートが数行の設定で覆え、
+  かつ期待値が AFT の記録からずれようがない。
   実測（193 本）で `filePaths` と `account_customizations_name` の突合はズレ 0・重複 0
+- **既定の期待値は「アカウントディレクトリ全体を include し、ドキュメントを exclude する」。**
+  ビルドすべきファイル種別を列挙する形にはしない。CodePipeline の `*` は `/` を跨がないため、
+  `{customizations_name}/terraform/*.tf` のような狭いパターンは、そのアカウントが
+  ローカルモジュールのディレクトリを持った瞬間に発火しなくなる — しかも**無言で**である
+  （マッチしない trigger は「誰も push していないリポジトリ」と区別がつかない）。
+  exclude 側で削るほうが安全で、精度も落ちない: CodePipeline は push に含まれる
+  **各ファイルを独立に評価する**ので、`.tf` と `README` を含むコミットは発火し、
+  ドキュメントだけのコミットは発火しない
+- **excludes は期待値の一部であって例外ではない。** includes は一致するが excludes を
+  持たないパイプラインは、ドキュメント push でビルドが走る別物なので `drift`
+  （reason `file_path_excludes`）として報告する。パターンの**順序は判定に含めない** —
+  CodePipeline 側が順序を評価しないため、設定を並べ替えただけで drift にはしない
 - **期待値を導出できないパイプラインは `unknown` であって `ok` ではない。** 「判定できなかった」
   と「正しかった」は逆の答えで、混ぜるとレポートが自分の入力の欠落を健康証明として出す
 - **キャッシュするのは観測した trigger だけで、判定結果はしない。** policy を変えたり
@@ -602,7 +615,11 @@ release:
 trigger:               # §4.4。アカウントごとの設定は持たず metadata から導出する
   source_action: aft-account-customizations
   branch: main
-  file_path_template: "{customizations_name}/terraform/*.tf"
+  file_path_includes:  # CodePipeline の上限: includes / excludes 各 8 本・1 本 255 文字
+    - "{customizations_name}/**"
+  file_path_excludes:
+    - "**/*.md"
+    - "**/.terraform-docs.yml"
 
 tui:
   poll_interval: 30s   # TUI の in-flight 自動再取得間隔 / `pipeline list --watch` の既定間隔
