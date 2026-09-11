@@ -38,6 +38,20 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
+      # scripts/scan-secrets.sh is deliberately NOT run here. Workflow logs on
+      # a public repository are public, and the scan reports the lines it
+      # matched — so a failure would print the value into a public log and put
+      # a named red check beside the commit holding it. That is an
+      # advertisement pointing at the leak.
+      #
+      # It is also too late to help: by the time CI runs, the commit is
+      # published. Unlike a credential, an account id cannot be rotated, so
+      # detecting it after publication buys nothing to pay that cost with. The
+      # scan belongs at the boundary before publication — see .githooks.
+      #
+      # If this repository ever becomes private, reconsider: the log is no
+      # longer public and the safety net is then worth having.
+
       - name: Build
         run: go build ./...
 

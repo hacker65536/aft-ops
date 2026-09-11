@@ -8,7 +8,7 @@
 BINARY := aft-ops
 
 .DEFAULT_GOAL := help
-.PHONY: help build install test vet check tidy fmt demo snapshot config-check clean
+.PHONY: help build install test vet scan hooks check tidy fmt demo snapshot config-check clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -26,7 +26,16 @@ test: ## Run tests
 vet: ## Run go vet
 	go vet ./...
 
-check: vet test ## Run go vet and tests
+scan: ## Refuse organization-identifying values (account ids, org names, emails)
+	bash scripts/scan-secrets.sh
+
+hooks: ## Point git at .githooks (pre-commit and pre-push run the scan)
+	@chmod +x .githooks/* scripts/scan-secrets.sh
+	git config core.hooksPath .githooks
+	@echo "core.hooksPath = .githooks"
+	@test -x .githooks/pre-commit || { echo "hooks are not executable; git will ignore them" >&2; exit 1; }
+
+check: vet test scan ## Run go vet, tests, and the secret scan
 
 tidy: ## Tidy go.mod / go.sum
 	go mod tidy

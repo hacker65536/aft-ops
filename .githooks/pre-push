@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The last boundary before publication, and the reason the scan is not in CI.
+#
+# pre-commit is where a mistake is cheapest to fix, but it is per-commit and
+# easy to skip with --no-verify. Pushing is the step that actually makes
+# something public, and for a value that cannot be rotated — an account id, an
+# organization name — being late is the whole problem. So scan the working
+# tree once more here.
+#
+# Enable with `make hooks` (sets core.hooksPath to this directory).
+set -e
+root=$(git rev-parse --show-toplevel)
+if ! bash "$root/scripts/scan-secrets.sh"; then
+  echo "refusing to push: see above" >&2
+  exit 1
+fi

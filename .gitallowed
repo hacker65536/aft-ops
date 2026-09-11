@@ -1,0 +1,39 @@
+# Lines matching any regex here are dropped from scripts/scan-secrets.sh output.
+#
+# Every entry needs a reason. This file is the only thing that lets a 12-digit
+# number through, so an unexplained line here is a hole. Prefer narrow entries:
+# an allow that covers a shape ("any UUID") also covers a real value that
+# happens to sit on the same line.
+
+# --- AWS's own documentation placeholders -----------------------------------
+# https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-identifiers.html
+\b(123456789012|111122223333|444455556666|777788889999|555555555555)\b
+
+# Repeated-digit ids used as throwaway values in unit tests. No real AWS
+# account is a single repeated digit.
+\b(0{12}|1{12}|2{12}|3{12}|4{12}|5{12}|6{12}|7{12}|8{12}|9{12})\b
+
+# --- Demo fixture -----------------------------------------------------------
+# docs/demo/fixture.json numbers its synthetic accounts 100000000000 upward.
+# The range is reserved for the fixture; nothing real may use it.
+\b1000000000[0-9][0-9]\b
+
+# A CodeBuild execution UUID in the fixture whose last group happens to be 12
+# digits: "...-84ad-284392220146". Listed as the literal value rather than as
+# "any UUID" on purpose — a shape-wide allow would also hide a real account id
+# printed on the same line. If re-recording the fixture trips this rule again,
+# look at the new value before adding it.
+284392220146
+
+# --- The scanner's own source -----------------------------------------------
+# scan-secrets.sh has to spell out the strings it refuses, so it matches
+# itself. Allowed per line rather than per file: exempting the whole file
+# would make it the one place a real value could hide.
+^scripts/scan-secrets\.sh:[0-9]+:(#|rule )
+
+# --- Email --------------------------------------------------------------
+# example.com is reserved by RFC 2606 for documentation. The fixture and the
+# golden files use aws+<name>@example.com.
+@example\.com
+# GoReleaser's commit author for the Homebrew tap.
+@users\.noreply\.github\.com

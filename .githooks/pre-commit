@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Two scanners, because they catch different things.
+#
+# git-secrets refuses credentials: access keys, secret keys, and a 12-digit
+# number assigned to something named like an account id.
+#
+# scan-secrets.sh refuses identifiers: any 12-digit number that is not
+# allowlisted, plus whatever git config secrets.patterns names. Those are what
+# this repository actually had to remove — git-secrets passed every one of
+# them, because none was shaped like a credential.
+#
+# Enable with `make hooks` (sets core.hooksPath to this directory).
+set -e
+root=$(git rev-parse --show-toplevel)
+command -v git-secrets >/dev/null 2>&1 && git secrets --pre_commit_hook -- "$@"
+exec bash "$root/scripts/scan-secrets.sh" --staged
