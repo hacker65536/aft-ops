@@ -185,7 +185,8 @@ terraform ログ抽出（`core/logs`）:
   こちらは「この件数のはず」という宣言で、無人の `--yes` 実行がアカウント増加に伴って
   黙って広がるのを止める。アサーションの対象は**選択された集合**であり、
   InProgress スキップ後に実際に起動した本数ではない
-- 既定の安全ガード: `max_release_targets: 50`（設定で変更可）。超過時は `--force-limit` 相当の明示が必要
+- 既定の安全ガード: `release.max_targets: 50`（設定で変更可）。超過時は `--max-targets N` での明示が必要
+- 実行中 (InProgress) のスキップは `release.skip_in_progress`（既定 true）。`--include-in-progress` で 1 回だけ上書きする
 - 冪等性: 実行中 (InProgress) のパイプラインは既定でスキップ（`--include-in-progress` で上書き）
 - **release は status キャッシュに依存しない**: status は「`--status` がどれを選ぶか」と
   「InProgress スキップがどれを飛ばすか」の 2 つを決めるため、`status_ttl`（既定 10m）だけ
@@ -260,6 +261,126 @@ AFT には plan → 承認 → apply のゲートが無く（上流 issue #153 �
 - **書き込み（trigger の設定）は実装しない。** 恒久化はパイプラインの作られ方そのものを
   変える話（AFT 本体の fork 等）であり、外から reconcile するものではない。両方持つと
   trigger の管理主体が二重になる
+
+### 4.5 Global 適用の収束実行（F11 + F12）
+
+```
+--global-ref <sha> と対象リストを受け取る
+→ 対象の最新 execution を取得（ソースリビジョン + ステージ別の成否）
+→ 収束済み/未収束を判定し、未収束だけを実行対象にする
+→ --expect / dry-run / 確認プロンプト（4.3 と同じガード）
+→ チャンクごとに StartPipelineExecution（§5 の逐次バッチエンジンをそのまま使う）
+    先頭チャンク: 完了を待って結果を確認し、判断を人に返す
+    以降        : 投入しつつ結果を回収。検知したら未投入のチャンクを止める
+→ 報告（global の到達率 / account 層で落ちたもの / 起動できなかったもの）
+```
+
+#### 永続的な実行台帳を持たない
+
+この機能を「対象リストを順に消化するジョブ」として実装すると、どこまで進んだかを
+ローカルに永続化する必要が生じ、中断・再開・単体再実行がそれぞれ別の機構になる。
+採らない。
+
+**パイプラインの実行結果がソースリビジョンを保持している**ため、「そのアカウントが
+どのコミットまで適用したか」は毎回 AWS 側から読める。つまり **AWS 側が台帳である**。
+これを使って操作を収束（reconcile）として定義すると、次が同じ 1 つの仕組みに畳まれる:
+
+| 操作 | 表現 |
+|---|---|
+| 通常実行 | `release --global-ref <sha> --file targets.txt` |
+| 中断からの再開 | **同じコマンドをもう一度実行する** |
+| 特定アカウントの再実行 | 同じコマンドを `--account` で絞る |
+| 完了確認 | 同じコマンドを `--dry-run` で実行し、対象が 0 件になることを見る |
+
+副次的な利点として、待機中に別経路（コンソール・trigger・他の運用者）でパイプラインが
+起動された場合、台帳方式は実態とずれるが収束方式は毎回 AWS を見るため自動的に追従する。
+
+処理中の一次キャッシュは §7 の既存機構をそのまま使う。**持たないのは永続化された
+実行状態**であって、キャッシュではない。
+
+#### 収束の判定はリビジョン × ステージ
+
+リビジョンだけで判定してはならない。パイプラインは Source が成功した時点で
+リビジョンを記録するため、**その後の apply が失敗しても新しいリビジョンが付く**。
+さらに global ステージが成功して account ステージで落ちた場合、execution 全体の
+ステータスは失敗だが **global は適用済み**である。
+
+| global リビジョン | Global ステージ | Account ステージ | 判定 |
+|---|---|---|---|
+| target | 成功 | 成功 | **収束済み** |
+| target | 成功 | 失敗 | global は達成。account 層の問題として別に扱う |
+| target | 失敗 | — | 未収束 → 実行対象 |
+| target 以外 | — | — | 未収束 → 実行対象 |
+
+2 行目を「完了」にも「未収束」にも倒さないことが重要で、倒すと **global の再適用を
+無駄に繰り返す**か、**account 層の失敗を見落とす**かのどちらかになる。この区別が
+あるからこそ「global はフリート全体に行き渡った。ただし N アカウントで account 層が
+落ちている」という、F11 の課題にそのまま対応する報告ができる。
+
+ステージ別の成否は失敗した execution についてだけ引けばよいので、追加の API コストは
+失敗件数に比例するだけで済む。
+
+#### 監視は待ってから少数回
+
+execution の所要時間には下限がある（実測では数分を下回らない）。**その間のポーリングは
+全て無駄**なので、連続ポーリングはしない。
+
+```
+投入 → 実測の最小所要時間まで待つ（この間は一切問い合わせない）
+     → 数回の確認で残りを回収する
+```
+
+確認回数は「完了確認だけなら 1 回・途中経過も見たいなら 2 回」で足りる規模である
+（具体的な待機時間と回数は計測記録に基づいて既定値を置く）。API コストは対象件数 ×
+確認回数にすぎず、状態一覧の取得より軽い。**§5 の rps とは別枠**で扱う必要はない。
+
+失敗したものについては CodeBuild の build を辿ってログを取得する。失敗件数分だけの
+追加コストであり、終端状態のログは不変なので §7 の原則どおりキャッシュできる。
+
+#### カナリアゲートと全体時間のトレードオフ
+
+「チャンクの結果を確認してから次のチャンク」を全チャンクに適用すると、総所要時間は
+
+```
+チャンク数 × execution の所要時間
+```
+
+に支配され、アカウント数に比例して跳ねる。数百アカウント規模では時間単位になり、
+実運用に耐えない。
+
+そこで **先頭のチャンクだけ完全にゲートし、以降は投入しつつ結果を回収する**構成を既定とする。
+
+```
+チャンク 1（カナリア）: 完了を待って全結果を確認 → 人が続行を判断
+チャンク 2 以降  : chunk_pause 間隔で投入。結果は遅れて届く
+                   失敗を検知したら「まだ投入していないチャンク」を止める
+```
+
+この構成では、検知した時点で `execution の所要時間 ÷ chunk_pause` チャンク分が既に投入済みで
+あり、**それらは止められない**。これは避けようのない帰結なので、ガードではなく
+**設計上の既知の範囲としてドキュメントと実行時出力の両方に明示する**（§6 の
+「silent failure 禁止」と同じ考え方 — 止められない範囲を黙って持たない）。
+
+全チャンクをゲートする運用が必要な場合は明示のフラグで選べるようにし、その際は所要時間が
+チャンク数に比例することを実行前に提示する。
+
+#### 実行順は人間が決める
+
+カナリアを先に置くには対象の順序制御が要る。危険度の自動判定（環境名からの推測等）は
+持たない — 組織ごとに命名規約が違ううえ、誤った推測で prod を先頭に置く事故が
+自動化の利得を上回る。**対象リストの記載順をそのまま実行順とする**モードを持ち、
+順序の責任を人間に残す。
+
+#### F11（(b) の検出）は terraform を実行しない
+
+各アカウントの「account 層の未適用コミット」は、パイプラインが記録している
+account 層のソースリビジョンと、リポジトリ側の当該アカウント配下の最新コミットの
+比較で求まる。**terraform も、各アカウントへの assume も要らない。**
+AFT のビルド環境を再現せずに済む範囲に機能を閉じるための境界がここである。
+
+F10（trigger ドリフト）とは因果でつながっている。trigger を失ったアカウントは
+merge しても発火しないため未適用コミットが積み上がり続ける。両者は同じ画面で
+並べて意味を持つ。
 
 ## 5. 逐次バッチエンジン（internal/batch）
 
@@ -590,9 +711,12 @@ TUI の各操作は core 層サービス呼び出しであり、CLI と完全に
 ```yaml
 # ~/.config/aft-ops/config.yaml（--config で上書き可）
 profile: my-aft-management-profile   # AFT 管理アカウント用の AWS プロファイル
+write_profile: ""                    # 書き込み操作用。空なら profile と同じ（§4.3 で同一アカウントを検証）
 region: ap-northeast-1
 aws_config_file: ~/.aws/config-sandbox  # profile を引く shared config file（後述）
 account_source: aft-dynamodb
+# static_accounts_file: ~/aft-accounts.json  # account_source: static のとき必須（§7.1）
+aft_metadata_table: aft-request-metadata  # account_source: aft-dynamodb のとき参照（§7.1）
 
 batch:
   concurrency: 10
@@ -626,6 +750,7 @@ tui:
 
 metrics:
   enabled: true
+  dir: ~/.local/state/aft-ops/metrics
   keep_runs: 100       # 保持する実行ごとの JSONL 件数（0 で無制限）
 ```
 
@@ -744,12 +869,15 @@ metrics はデモ時に無効化する（フェイク呼び出しは SDK middlew
 
 ## 13. フェーズ別実装計画（requirements §8 の具体化）
 
-| Phase | 実装物 |
-|---|---|
-| 1 | リポジトリ骨格 / config / awsx / cache / account 解決 / batch（最小: 並列度+RPS+リトライ） / `pipeline list` / `pipeline release`（単発+ガード） / TUI 一覧画面 / metrics（記録のみ） |
-| 2 | `pipeline show` / `pipeline logs`（terraform 抽出・summary） / batch 完全版（チャンク・進捗） / `pipeline release` バッチ / TUI 詳細・ログ画面・multi-select / `metrics show` |
-| 3 | account-request（DynamoDB）/ Step Functions 状態 / 共通系パイプライン |
-| 4 | OSS 公開整備（英語 docs・goreleaser・Homebrew tap・LICENSE） |
+| Phase | 実装物 | 状態 |
+|---|---|---|
+| 1 | リポジトリ骨格 / config / awsx / cache / account 解決 / batch（最小: 並列度+RPS+リトライ） / `pipeline list` / `pipeline release`（単発+ガード） / TUI 一覧画面 / metrics（記録のみ） | **実装済** |
+| 2 | `pipeline show` / `pipeline executions` / `pipeline refresh` / `pipeline logs`（terraform 抽出・summary） / batch 完全版（チャンク・進捗） / `pipeline release` バッチ / `pipeline triggers`（F10・§4.4） / TUI 詳細・ログ画面・multi-select / `metrics show` | **実装済** |
+| 3 | §4.5 収束実行（F11 + F12）: リビジョン×ステージ判定 / チャンクゲート / 完了モニタリング / 未適用コミット検出 | 未着手 |
+| 4 | account-request（DynamoDB）/ Step Functions 状態 / 共通系パイプライン（F9） | 未着手 |
+| 5 | OSS 公開整備（英語 docs・goreleaser・Homebrew tap・LICENSE） | 一部先行済（goreleaser / homebrew_casks / LICENSE / CI は導入済。英語ドキュメントが残り） |
+
+Phase 番号は requirements §8 と一対一で対応させる。片方だけを増やさないこと。
 
 ## 14. 設計上の未決事項
 
@@ -758,5 +886,7 @@ metrics はデモ時に無効化する（フェイク呼び出しは SDK middlew
 | ~~D1~~ | ~~リポジトリ~~ | **解決済**: 新規リポジトリ `aft-ops` で開始。既存 Bash ツールセットは資産として残し移行後アーカイブ |
 | ~~D2~~ | ~~既定リージョン~~ | **解決済**: `ap-northeast-1` |
 | ~~D3~~ | ~~`aft-request-metadata` テーブルのスキーマ確認~~ | **解決済**: 実テーブルで検証し `core/account` を実スキーマに追従済み |
-| D4 | TUI のログ画面で CloudWatch Logs Live Tail を使うか | Phase 2 で判断（ポーリングで十分な可能性） |
-| D5 | 設定実装 | **解決済**: YAML 単一フォーマット・`yaml.v3` + 自前マージ（viper は依存過多のため不採用） |
+| ~~D4~~ | ~~TUI のログ画面で CloudWatch Logs Live Tail を使うか~~ | **解決済**: 使わない。`core/logs` は `GetLogEvents` のページングで実装。終端 build のログは不変でキャッシュが効くため、常時接続の利得が無い |
+| ~~D5~~ | ~~設定実装~~ | **解決済**: YAML 単一フォーマット・`yaml.v3` + 自前マージ（viper は依存過多のため不採用） |
+| D6 | F12 のカナリアゲート以降、止められない先行投入範囲をどこまで許容するか | requirements U8。`execution の所要時間 ÷ chunk_pause` で決まる |
+| D7 | F12 の判定に terraform の apply サマリ行まで含めるか | requirements U7。ステージの成否だけなら AFT の出力形式に依存しない |
