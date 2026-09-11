@@ -2,6 +2,11 @@ module github.com/hacker65536/aft-ops
 
 go 1.26.5
 
+// Every release before v0.15.0 is withdrawn. They are superseded and should
+// not be used; the module mirror keeps published versions available whether
+// or not they are retracted, so this marks them rather than removes them.
+retract [v0.0.1, v0.14.0]
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.31
