@@ -30,10 +30,10 @@ func TestDynamoSourceMapsLiveSchema(t *testing.T) {
 		Client: fakeScan{out: &dynamodb.ScanOutput{
 			Items: []map[string]ddbtypes.AttributeValue{
 				{
-					"id":                          str("943321203864"),
-					"email":                       str("admin+bpaas-ai-dev-root@example.com"),
-					"account_name":                str("bpaas-ai-dev"),
-					"account_customizations_name": str("bpaas-ai-dev"),
+					"id":                          str("123456789012"),
+					"email":                       str("admin+example-workload-dev-root@example.com"),
+					"account_name":                str("example-workload-dev"),
+					"account_customizations_name": str("example-workload-dev"),
 					"account_status":              str("ACTIVE"),
 				},
 				{ // account_name missing → fall back to customizations name
@@ -59,8 +59,8 @@ func TestDynamoSourceMapsLiveSchema(t *testing.T) {
 	for _, a := range accounts {
 		byID[a.ID] = a
 	}
-	if got := byID["943321203864"]; got.Name != "bpaas-ai-dev" || got.Email != "admin+bpaas-ai-dev-root@example.com" {
-		t.Errorf("943321203864 mapped to %+v, want name=bpaas-ai-dev with email", got)
+	if got := byID["123456789012"]; got.Name != "example-workload-dev" || got.Email != "admin+example-workload-dev-root@example.com" {
+		t.Errorf("123456789012 mapped to %+v, want name=example-workload-dev with email", got)
 	}
 	if got := byID["111122223333"]; got.Name != "only-custom" {
 		t.Errorf("name fallback failed: got %q, want only-custom", got.Name)
@@ -68,7 +68,7 @@ func TestDynamoSourceMapsLiveSchema(t *testing.T) {
 	// The customizations name is carried, not just used as a name fallback:
 	// it is what the expected pipeline trigger's file path is derived from.
 	for id, want := range map[string]string{
-		"943321203864": "bpaas-ai-dev",
+		"123456789012": "example-workload-dev",
 		"111122223333": "only-custom",
 	} {
 		if got := byID[id].CustomizationsName; got != want {

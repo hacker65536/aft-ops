@@ -96,8 +96,8 @@ func TestRevisionMessage(t *testing.T) {
 		name, summary, want string
 	}{
 		{"codeconnections json",
-			`{"ProviderType":"GitHub","CommitMessage":"Merge pull request #801 from C-FO/x"}`,
-			"Merge pull request #801 from C-FO/x"},
+			`{"ProviderType":"GitHub","CommitMessage":"Merge pull request #42 from example-org/topic"}`,
+			"Merge pull request #42 from example-org/topic"},
 		{"plain text", "fix vpc", "fix vpc"},
 		{"json without CommitMessage stays raw", `{"ProviderType":"GitHub"}`, `{"ProviderType":"GitHub"}`},
 		{"invalid json stays raw", "{not json", "{not json"},

@@ -13,16 +13,16 @@ import (
 // operator does next.
 func TestCrossAccountWriteErrorNamesBothSides(t *testing.T) {
 	err := crossAccountWriteError(
-		"105154922941", "poc-read",
-		"670512287696", "prod-admin",
+		"111122223333", "poc-read",
+		"123456789012", "prod-admin",
 	)
 	if err == nil {
 		t.Fatal("want an error")
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		"105154922941", "poc-read", // the account being read
-		"670512287696", "prod-admin", // the account about to be written
+		"111122223333", "poc-read", // the account being read
+		"123456789012", "prod-admin", // the account about to be written
 		"--write-profile", // the remedy
 	} {
 		if !strings.Contains(msg, want) {
@@ -36,7 +36,7 @@ func TestCrossAccountWriteErrorNamesBothSides(t *testing.T) {
 // determined.
 func TestCrossAccountWriteErrorWithUnknownReadAccount(t *testing.T) {
 	err := crossAccountWriteError("", "(unset — using the default credential chain)",
-		"670512287696", "prod-admin")
+		"123456789012", "prod-admin")
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -44,7 +44,7 @@ func TestCrossAccountWriteErrorWithUnknownReadAccount(t *testing.T) {
 	if !strings.Contains(msg, "could not be determined") {
 		t.Errorf("message should say the read account is unknown:\n%s", msg)
 	}
-	if !strings.Contains(msg, "670512287696") {
+	if !strings.Contains(msg, "123456789012") {
 		t.Errorf("message should still name the write account:\n%s", msg)
 	}
 }
