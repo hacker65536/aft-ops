@@ -36,6 +36,12 @@ func IsThrottle(err error) bool {
 // Middleware returns an aws.Config.APIOptions hook that records one Entry
 // per API call attempt (retries are separate attempts by design: throttle
 // analysis needs the raw attempt rate, not the logical call rate).
+//
+// It goes at the front of the Deserialize step, outside the operation's own
+// deserializer. That deserializer is what turns an HTTP 400
+// "ThrottlingException" response into an error; a recorder placed after it
+// (closer to the wire) sees every response as a success, and recorded zero
+// throttles through a run in which CodeBuild throttled one call in six.
 func Middleware(rec *Recorder) func(*middleware.Stack) error {
 	return func(stack *middleware.Stack) error {
 		return stack.Deserialize.Add(middleware.DeserializeMiddlewareFunc(
@@ -58,7 +64,7 @@ func Middleware(rec *Recorder) func(*middleware.Stack) error {
 				rec.Record(e)
 				return out, md, err
 			},
-		), middleware.After)
+		), middleware.Before)
 	}
 }
 
