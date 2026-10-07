@@ -743,7 +743,11 @@ CodePipeline の実データモデル（pipeline → executions → action execu
 
 - 一覧の結果列（F13・実装済み）: GLOBAL / ACCOUNT 列を STATUS と LAST UPDATE の間に置き、
   status 表示後に行ごとに遅延取得して埋める。記号・色・取得順・再投入の規則は §4.6。
-  色付けは STATUS と同じく描画済みの view への後段処理（`styleTableCells` が複数列を扱う）
+  色付けは STATUS と同じく描画済みの view への後段処理（`styleTableCells` が複数列を扱う）。
+  一覧のヘッダは「変化する情報が先・固定の文脈が後」の順（`[N selected]` → results 表示 →
+  `[status: …]` → 件数 → `[account region]` → `[sort: …]`）。幅が足りない端末で切れるのは
+  末尾なので、切れるのはソート順であって結果の完了表示ではない。接続先アカウントは
+  取り違え防止のためソート順より前に残す
 - 一覧キー（実装済み）: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
   (last-update→status→account)・`o` 昇降順トグル・`l`/`enter` 実行履歴画面・`v` ログ直行・
   `space` 選択トグル・`x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。

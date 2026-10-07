@@ -223,3 +223,21 @@ func TestResultsIndicator(t *testing.T) {
 		t.Errorf("finished indicator = %q, want ✓ 3/3", ind)
 	}
 }
+
+// The header puts what changes ahead of the fixed context, so a narrow
+// terminal cuts the sort order before the results indicator.
+func TestHeaderOrderPutsResultsFirst(t *testing.T) {
+	m, _ := resultsModel(t, map[string]model.ExecutionResults{})
+	m.account, m.region = "123456789012", "ap-northeast-1"
+	m.statusIdx = 1 // Failed
+	head := strings.SplitN(m.View(), "\n", 2)[0]
+	order := []string{"results", "[status:", "shown /", "[123456789012", "[sort:"}
+	last := -1
+	for _, w := range order {
+		i := strings.Index(head, w)
+		if i < 0 || i < last {
+			t.Fatalf("header %q: %q missing or out of order (want %v)", head, w, order)
+		}
+		last = i
+	}
+}

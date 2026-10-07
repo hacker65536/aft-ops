@@ -891,16 +891,18 @@ var (
 func (m uiModel) View() string {
 	var b strings.Builder
 
+	// What changes comes first and the fixed context last: a terminal too
+	// narrow for the whole line cuts the tail, and that should be the sort
+	// order rather than whether the result columns are complete. The target
+	// account stays ahead of the sort order — it is what keeps a session
+	// against the wrong organization visible.
 	header := navDots(1) + " " + titleStyle.Render("aft-ops — account pipelines")
-	if m.account != "" {
-		header += dimStyle.Render("  [" + m.account + " " + m.region + "]")
-	}
-	if want := statusCycle[m.statusIdx]; want != "" {
-		header += dimStyle.Render("  [status: " + string(want) + "]")
-	}
-	header += dimStyle.Render("  [sort: " + string(m.sortKey) + " " + orderArrow(m.sortOrder) + "]")
 	if n := len(m.selected); n > 0 {
 		header += titleStyle.Render(fmt.Sprintf("  [%d selected]", n))
+	}
+	header += m.resultsIndicator()
+	if want := statusCycle[m.statusIdx]; want != "" {
+		header += dimStyle.Render("  [status: " + string(want) + "]")
 	}
 	if m.loading {
 		header += "  " + m.spin.View()
@@ -912,7 +914,10 @@ func (m uiModel) View() string {
 	} else {
 		header += dimStyle.Render(fmt.Sprintf("  %d shown / %d total", len(m.table.Rows()), len(m.items)))
 	}
-	header += m.resultsIndicator()
+	if m.account != "" {
+		header += dimStyle.Render("  [" + m.account + " " + m.region + "]")
+	}
+	header += dimStyle.Render("  [sort: " + string(m.sortKey) + " " + orderArrow(m.sortOrder) + "]")
 	b.WriteString(header + "\n")
 
 	if m.filtering || m.filter.Value() != "" {
