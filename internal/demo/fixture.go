@@ -16,6 +16,7 @@ package demo
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -176,6 +177,9 @@ type Env struct {
 	base time.Time
 	now  func() time.Time
 	seq  int
+	// limits, when set, admits every fake API call — the demo's stand-in
+	// for the SDK middleware that rate-limits real calls (awsx.RateLimit).
+	limits Limits
 
 	mu sync.Mutex
 }
@@ -236,6 +240,21 @@ func (e *Env) SetLatency(d time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.fx.Latency = Duration(d)
+}
+
+// Limits is the rate budget the fakes wait on (awsx.Limits): one bucket per
+// AWS service, by SDK service id.
+type Limits interface {
+	Wait(ctx context.Context, service string) error
+}
+
+// SetLimits makes every fake API call wait for its service's token, as every
+// real call does through the SDK middleware. The pacing of a demo run then
+// matches a real one: cached data costs nothing, API calls cost tokens.
+func (e *Env) SetLimits(l Limits) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.limits = l
 }
 
 // execState is one execution's effective state at a moment in time.

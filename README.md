@@ -160,7 +160,9 @@ aws_config_file: ~/.aws/config-sandbox
 
 batch:
   concurrency: 10
-  rps: 8
+  rps: 8                 # API calls per second, per AWS service (each has its own quota)
+  service_rps:           # per-service override; 0 = use rps
+    logs: 16             # CloudWatch Logs: the result columns read 2 logs per pipeline
 
 cache:
   status_ttl: 10m        # latest-status cache; 0 = always fan out

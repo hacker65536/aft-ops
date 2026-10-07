@@ -23,11 +23,18 @@ import (
 // demo should exercise rather than bypass.
 const logPageSize = 200
 
-// tick applies the fixture's per-call latency, respecting cancellation.
-func (e *Env) tick(ctx context.Context) error {
+// tick admits one fake call to the named service (an SDK service id): it
+// waits for that service's rate limit (when set) and then the fixture's
+// per-call latency, respecting cancellation.
+func (e *Env) tick(ctx context.Context, service string) error {
 	e.mu.Lock()
-	d := e.fx.Latency.D()
+	d, l := e.fx.Latency.D(), e.limits
 	e.mu.Unlock()
+	if l != nil {
+		if err := l.Wait(ctx, service); err != nil {
+			return err
+		}
+	}
 	if d <= 0 {
 		return ctx.Err()
 	}
@@ -51,7 +58,7 @@ type PipelineClient struct{ env *Env }
 
 func (c *PipelineClient) ListPipelines(ctx context.Context, _ *codepipeline.ListPipelinesInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.ListPipelinesOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -74,7 +81,7 @@ func (c *PipelineClient) ListPipelines(ctx context.Context, _ *codepipeline.List
 func (c *PipelineClient) ListPipelineExecutions(ctx context.Context,
 	in *codepipeline.ListPipelineExecutionsInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.ListPipelineExecutionsOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -120,7 +127,7 @@ func (c *PipelineClient) ListPipelineExecutions(ctx context.Context,
 func (c *PipelineClient) GetPipelineState(ctx context.Context,
 	in *codepipeline.GetPipelineStateInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.GetPipelineStateOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -190,7 +197,7 @@ func (c *PipelineClient) GetPipelineState(ctx context.Context,
 func (c *PipelineClient) GetPipeline(ctx context.Context,
 	in *codepipeline.GetPipelineInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.GetPipelineOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -228,7 +235,7 @@ func (c *PipelineClient) GetPipeline(ctx context.Context,
 func (c *PipelineClient) ListActionExecutions(ctx context.Context,
 	in *codepipeline.ListActionExecutionsInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.ListActionExecutionsOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -308,7 +315,7 @@ type StartClient struct{ env *Env }
 func (c *StartClient) StartPipelineExecution(ctx context.Context,
 	in *codepipeline.StartPipelineExecutionInput,
 	_ ...func(*codepipeline.Options)) (*codepipeline.StartPipelineExecutionOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -415,7 +422,7 @@ type CodeBuildClient struct{ env *Env }
 
 func (c *CodeBuildClient) BatchGetBuilds(ctx context.Context, in *codebuild.BatchGetBuildsInput,
 	_ ...func(*codebuild.Options)) (*codebuild.BatchGetBuildsOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CodeBuild"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -457,7 +464,7 @@ type LogsClient struct{ env *Env }
 
 func (c *LogsClient) GetLogEvents(ctx context.Context, in *cloudwatchlogs.GetLogEventsInput,
 	_ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetLogEventsOutput, error) {
-	if err := c.env.tick(ctx); err != nil {
+	if err := c.env.tick(ctx, "CloudWatch Logs"); err != nil {
 		return nil, err
 	}
 	e := c.env
@@ -517,7 +524,7 @@ type AccountSource struct{ env *Env }
 func (s *AccountSource) Name() string { return "demo(" + s.env.label() + ")" }
 
 func (s *AccountSource) Fetch(ctx context.Context) ([]model.Account, error) {
-	if err := s.env.tick(ctx); err != nil {
+	if err := s.env.tick(ctx, "DynamoDB"); err != nil {
 		return nil, err
 	}
 	s.env.mu.Lock()

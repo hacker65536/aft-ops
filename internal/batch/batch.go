@@ -56,6 +56,22 @@ func Run[T, R any](
 	fn func(context.Context, T) (R, error),
 	onProgress func(Progress),
 ) []Result[R] {
+	return Each(ctx, cfg, items, fn, nil, onProgress)
+}
+
+// Each is Run with a per-item hook: onResult (optional) receives every item's
+// result as soon as that item settles — including the ones a cancellation
+// settles without running — so a caller can show results as they arrive
+// rather than when the whole batch is over. Like onProgress it is invoked
+// from worker goroutines, serialized, and must be fast.
+func Each[T, R any](
+	ctx context.Context,
+	cfg Config,
+	items []T,
+	fn func(context.Context, T) (R, error),
+	onResult func(Result[R]),
+	onProgress func(Progress),
+) []Result[R] {
 	cfg = cfg.withDefaults()
 	results := make([]Result[R], len(items))
 	for i := range results {
@@ -68,18 +84,26 @@ func Run[T, R any](
 	}
 
 	var done, failed atomic.Int64
-	var progressMu sync.Mutex
-	notify := func() {
-		if onProgress == nil {
+	var notifyMu sync.Mutex
+	// notify reports the settled items (by index) and the new totals.
+	notify := func(settled ...int) {
+		if onResult == nil && onProgress == nil {
 			return
 		}
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		onProgress(Progress{
-			Done:   int(done.Load()),
-			Failed: int(failed.Load()),
-			Total:  len(items),
-		})
+		notifyMu.Lock()
+		defer notifyMu.Unlock()
+		if onResult != nil {
+			for _, i := range settled {
+				onResult(results[i])
+			}
+		}
+		if onProgress != nil {
+			onProgress(Progress{
+				Done:   int(done.Load()),
+				Failed: int(failed.Load()),
+				Total:  len(items),
+			})
+		}
 	}
 
 	chunks := chunkIndexes(len(items), cfg.ChunkSize)
@@ -112,7 +136,7 @@ func runChunk[T, R any](
 	chunk []int,
 	fn func(context.Context, T) (R, error),
 	done, failed *atomic.Int64,
-	notify func(),
+	notify func(...int),
 ) {
 	sem := make(chan struct{}, cfg.Concurrency)
 	var wg sync.WaitGroup
@@ -125,7 +149,7 @@ func runChunk[T, R any](
 		if err != nil {
 			failed.Add(1)
 		}
-		notify()
+		notify(i)
 	}
 	for _, idx := range chunk {
 		if ctx.Err() != nil {
@@ -155,15 +179,17 @@ func runChunk[T, R any](
 // markCancelled settles every not-yet-run item so the caller sees a complete
 // result set (and a progress count that reaches Total) after a cancellation.
 func markCancelled[R any](ctx context.Context, results []Result[R], from int,
-	done, failed *atomic.Int64, notify func()) {
+	done, failed *atomic.Int64, notify func(...int)) {
+	var settled []int
 	for i := from; i < len(results); i++ {
 		if results[i].Err == nil {
 			results[i].Err = ctx.Err()
 			done.Add(1)
 			failed.Add(1)
+			settled = append(settled, i)
 		}
 	}
-	notify()
+	notify(settled...)
 }
 
 // chunkIndexes splits [0,n) into chunks of size (0 = one chunk).

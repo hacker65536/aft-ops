@@ -85,7 +85,7 @@ func Execute(ctx context.Context) error {
 	pf.BoolVar(&app.NoColor, "no-color", false, "disable colored output")
 	pf.BoolVar(&app.Refresh, "refresh", false, "bypass caches and refetch")
 	pf.IntVar(&flags.concurrency, "concurrency", 0, "batch concurrency (overrides config)")
-	pf.Float64Var(&flags.rps, "rps", 0, "API requests per second limit, 0 = unlimited (overrides config)")
+	pf.Float64Var(&flags.rps, "rps", 0, "API requests per second limit for each AWS service, 0 = unlimited (overrides batch.rps and batch.service_rps)")
 
 	root.AddCommand(
 		newPipelineCmd(app),
@@ -136,7 +136,10 @@ func (f rootFlags) apply(changed func(string) bool, cfg *config.Config) {
 		cfg.Batch.Concurrency = f.concurrency
 	}
 	if changed("rps") {
+		// The flag is the one knob a run has: it sets every service's rate,
+		// overriding batch.service_rps too, so `--rps 0` really is unlimited.
 		cfg.Batch.RPS = f.rps
+		cfg.Batch.ServiceRPS = config.ServiceRPS{}
 	}
 }
 

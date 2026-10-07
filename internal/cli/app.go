@@ -54,6 +54,7 @@ type App struct {
 	writeCfg  *aws.Config
 	logsSvc   *logs.Service
 	pipeSvc   *pipeline.Service
+	limits    *awsx.Limits
 	accountID string // resolved caller identity (see Identity)
 }
 
@@ -116,7 +117,7 @@ func (a *App) readAWSLocked(ctx context.Context) (aws.Config, error) {
 	if a.readCfg != nil {
 		return *a.readCfg, nil
 	}
-	cfg, err := awsx.Load(ctx, a.Cfg.Profile, a.Cfg.Region, a.Cfg.AWSConfigFile, a.rec)
+	cfg, err := awsx.Load(ctx, a.Cfg.Profile, a.Cfg.Region, a.Cfg.AWSConfigFile, a.rec, a.limitsLocked())
 	if err != nil {
 		return aws.Config{}, err
 	}
@@ -163,7 +164,7 @@ func (a *App) WriteAWS(ctx context.Context) (aws.Config, error) {
 	if a.writeCfg != nil {
 		return *a.writeCfg, nil
 	}
-	cfg, err := awsx.Load(ctx, wp, a.Cfg.Region, a.Cfg.AWSConfigFile, a.rec)
+	cfg, err := awsx.Load(ctx, wp, a.Cfg.Region, a.Cfg.AWSConfigFile, a.rec, a.limitsLocked())
 	if err != nil {
 		return aws.Config{}, err
 	}
@@ -354,11 +355,32 @@ func (a *App) awsConfigFileNote() string {
 	return " · config " + awsx.ConfigFileLabel(a.Cfg.AWSConfigFile)
 }
 
+// limitsLocked returns the run's API budget: one bucket per AWS service at
+// the rate batch.rps / batch.service_rps give it. Every AWS config of the run
+// carries it, so the read and write clients and every fan-out share one
+// calls-per-second budget per service (awsx.RateLimit). Callers hold a.mu.
+func (a *App) limitsLocked() *awsx.Limits {
+	if a.limits == nil {
+		a.limits = &awsx.Limits{RateFor: a.Cfg.Batch.RateFor}
+	}
+	return a.limits
+}
+
+// demoLimitsLocked hands the run's API budget to the demo fakes, which stand
+// in for the SDK clients that carry it against AWS. Callers hold a.mu.
+func (a *App) demoLimitsLocked() {
+	a.Demo.SetLimits(a.limitsLocked())
+}
+
 // BatchConfig maps config to the batch engine.
+//
+// The rate limit is not the engine's: it is enforced per API call by the
+// budget every client carries (limitsLocked; the demo fakes carry it too),
+// so the engine only bounds concurrency. Limiting items as well would make
+// an item served from cache wait for a token it never spends.
 func (a *App) BatchConfig() batch.Config {
 	return batch.Config{
 		Concurrency: a.Cfg.Batch.Concurrency,
-		RPS:         a.Cfg.Batch.RPS,
 		ChunkSize:   a.Cfg.Batch.ChunkSize,
 		ChunkPause:  a.Cfg.Batch.ChunkPause.D(),
 	}
@@ -386,6 +408,7 @@ func (a *App) PipelineService(ctx context.Context) (*pipeline.Service, error) {
 	var read pipeline.API
 	if a.Demo != nil {
 		a.announceDemoTarget()
+		a.demoLimitsLocked()
 		read = a.Demo.PipelineAPI()
 	} else {
 		cfg, err := a.readAWSLocked(ctx)
@@ -415,6 +438,7 @@ func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
 	}
 	if a.Demo != nil {
 		a.announceDemoTarget()
+		a.demoLimitsLocked()
 		a.logsSvc = &logs.Service{
 			CodeBuild: a.Demo.CodeBuildAPI(),
 			Logs:      a.Demo.LogsAPI(),
@@ -436,6 +460,9 @@ func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
 func (a *App) StartClient(ctx context.Context) (pipeline.StartAPI, error) {
 	if a.Demo != nil {
 		a.announceDemoTarget()
+		a.mu.Lock()
+		a.demoLimitsLocked()
+		a.mu.Unlock()
 		return a.Demo.StartAPI(), nil
 	}
 	cfg, err := a.WriteAWS(ctx)

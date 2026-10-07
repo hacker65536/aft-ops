@@ -172,3 +172,26 @@ func TestRunProgressReachesTotal(t *testing.T) {
 		t.Fatalf("final progress %+v, want Done=Total=30", last)
 	}
 }
+
+// Each hands every item's result to onResult as soon as it settles —
+// exactly once per item, cancelled ones included.
+func TestEachReportsEveryItem(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	items := []int{1, 2, 3, 4}
+	seen := map[int]int{}
+	Each(ctx, Config{Concurrency: 1, ChunkSize: 2}, items,
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				cancel() // the second chunk never starts
+			}
+			return v * 10, nil
+		},
+		func(r Result[int]) { seen[r.Index]++ }, nil)
+
+	for i := range items {
+		if seen[i] != 1 {
+			t.Errorf("item %d reported %d times, want once", i, seen[i])
+		}
+	}
+}

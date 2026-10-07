@@ -71,10 +71,43 @@ type Config struct {
 }
 
 type Batch struct {
-	Concurrency int      `yaml:"concurrency"`
-	RPS         float64  `yaml:"rps"`
-	ChunkSize   int      `yaml:"chunk_size"`
-	ChunkPause  Duration `yaml:"chunk_pause"`
+	Concurrency int `yaml:"concurrency"`
+	// RPS limits API calls per second, per AWS service: CodePipeline,
+	// CodeBuild and CloudWatch Logs each get their own bucket at this rate
+	// unless ServiceRPS sets one (AWS meters each service separately).
+	// 0 = unlimited.
+	RPS        float64    `yaml:"rps"`
+	ServiceRPS ServiceRPS `yaml:"service_rps"`
+	ChunkSize  int        `yaml:"chunk_size"`
+	ChunkPause Duration   `yaml:"chunk_pause"`
+}
+
+// ServiceRPS overrides batch.rps for one AWS service (0 = use batch.rps).
+type ServiceRPS struct {
+	CodePipeline float64 `yaml:"codepipeline"`
+	CodeBuild    float64 `yaml:"codebuild"`
+	// Logs is CloudWatch Logs. The list's terraform results read two logs
+	// per pipeline for every CodePipeline call, so it gets twice the default
+	// rate — still well inside GetLogEvents' own quota.
+	Logs float64 `yaml:"logs"`
+}
+
+// RateFor returns the calls-per-second limit of an AWS service, by its SDK
+// service id (0 = unlimited).
+func (b Batch) RateFor(service string) float64 {
+	var v float64
+	switch service {
+	case "CodePipeline":
+		v = b.ServiceRPS.CodePipeline
+	case "CodeBuild":
+		v = b.ServiceRPS.CodeBuild
+	case "CloudWatch Logs":
+		v = b.ServiceRPS.Logs
+	}
+	if v > 0 {
+		return v
+	}
+	return b.RPS
 }
 
 type Cache struct {
@@ -160,6 +193,7 @@ func Default() Config {
 		Batch: Batch{
 			Concurrency: 10,
 			RPS:         8,
+			ServiceRPS:  ServiceRPS{Logs: 16},
 			ChunkSize:   0,
 			ChunkPause:  0,
 		},
@@ -246,6 +280,19 @@ func (c *Config) Validate() error {
 	}
 	if c.Batch.Concurrency < 1 {
 		return fmt.Errorf("batch.concurrency must be >= 1 (got %d)", c.Batch.Concurrency)
+	}
+	for _, kv := range []struct {
+		key string
+		v   float64
+	}{
+		{"batch.rps", c.Batch.RPS},
+		{"batch.service_rps.codepipeline", c.Batch.ServiceRPS.CodePipeline},
+		{"batch.service_rps.codebuild", c.Batch.ServiceRPS.CodeBuild},
+		{"batch.service_rps.logs", c.Batch.ServiceRPS.Logs},
+	} {
+		if kv.v < 0 {
+			return fmt.Errorf("%s must be >= 0 (got %g)", kv.key, kv.v)
+		}
 	}
 	// An empty trigger key cannot be judged against: it makes every pipeline
 	// report "unknown", which reads as a broken tool rather than as the

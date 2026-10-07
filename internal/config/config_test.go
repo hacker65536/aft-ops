@@ -363,8 +363,8 @@ func TestEveryConfigKeyIsSettableFromTheEnvironment(t *testing.T) {
 // Every key means every key: a count that drops is a field that stopped being
 // reachable, which is exactly the drift the derived names exist to prevent.
 func TestConfigKeyCount(t *testing.T) {
-	if got := len(configPaths(t)); got != 27 {
-		t.Errorf("walked %d config keys, want 27 — if a field was added or "+
+	if got := len(configPaths(t)); got != 30 {
+		t.Errorf("walked %d config keys, want 30 — if a field was added or "+
 			"removed on purpose, update this count and the sample config in "+
 			"the README", got)
 	}
@@ -424,5 +424,17 @@ func TestValidateRejectsUnusableTriggerPolicies(t *testing.T) {
 	def := Default()
 	if err := def.Validate(); err != nil {
 		t.Errorf("the defaults must validate: %v", err)
+	}
+}
+
+// RateFor gives each service its own override and falls back to batch.rps.
+func TestBatchRateFor(t *testing.T) {
+	b := Batch{RPS: 8, ServiceRPS: ServiceRPS{Logs: 16}}
+	for svc, want := range map[string]float64{
+		"CodePipeline": 8, "CodeBuild": 8, "CloudWatch Logs": 16, "STS": 8,
+	} {
+		if got := b.RateFor(svc); got != want {
+			t.Errorf("RateFor(%q) = %g, want %g", svc, got, want)
+		}
 	}
 }
