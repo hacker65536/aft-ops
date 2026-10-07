@@ -32,6 +32,27 @@ type refreshedMsg struct {
 
 type progressMsg batch.Progress
 
+// resultMsg delivers one row's terraform results from the background read
+// (see beginResults); resultsDoneMsg says the read has finished.
+type (
+	resultMsg struct {
+		name string
+		r    model.ExecutionResults
+		err  error
+	}
+	resultsDoneMsg struct{}
+)
+
+// rowResults is what the list knows about one row's terraform results, and
+// for which state of the row it was read: a new execution, or the same one
+// changing status, makes it stale.
+type rowResults struct {
+	execID string
+	status model.Status
+	r      model.ExecutionResults
+	err    string
+}
+
 // refreshNamesMsg asks the list to refetch the given pipelines' statuses and
 // clear their selection — emitted by the release screen on its way back so
 // just-released rows update to InProgress.
@@ -56,6 +77,8 @@ type uiModel struct {
 	execsFn      ExecutionsFunc
 	actionsFn    ActionsFunc
 	logs         LogsFunc
+	resultsFn    ResultsFunc
+	buildResults BuildResultsFunc
 	release      ReleaseFunc
 	releaseLimit int
 
@@ -75,6 +98,17 @@ type uiModel struct {
 	progressCh chan batch.Progress
 	pollArmed  bool
 	pollGen    int
+
+	// The terraform result columns (docs/design.md §4.6) fill in after the
+	// rows: results holds what has been read, by pipeline name; resultsStale
+	// marks rows to read again although their execution looks unchanged (an
+	// in-flight row the poll just refreshed, a row the operator refreshed).
+	// One background read runs at a time; rows that change meanwhile are
+	// picked up when it finishes.
+	results      map[string]rowResults
+	resultsStale map[string]bool
+	resultsBusy  bool
+	resultsCh    chan resultMsg
 	// cursor tracks what the cursor row's highlight currently conveys (see
 	// syncCursorTint).
 	cursor    cursorTint
@@ -115,11 +149,13 @@ func newModel(ctx context.Context, d Deps) uiModel {
 		ctx:   ctx,
 		fetch: d.Fetch, refresh: d.Refresh, detail: d.Detail,
 		execsFn: d.Executions, actionsFn: d.Actions,
-		logs: d.Logs, release: d.Release, releaseLimit: d.ReleaseLimit,
+		logs: d.Logs, resultsFn: d.Results, buildResults: d.BuildResults,
+		release: d.Release, releaseLimit: d.ReleaseLimit,
 		pollInterval: d.PollInterval, account: d.Account, region: d.Region,
 		table: newScreenTable(columns(80)), filter: ti, spin: sp,
 		selected: map[string]bool{},
-		sortKey:  model.SortByLastUpdate, sortOrder: model.OrderDesc,
+		results:  map[string]rowResults{}, resultsStale: map[string]bool{},
+		sortKey: model.SortByLastUpdate, sortOrder: model.OrderDesc,
 	}
 }
 
@@ -153,23 +189,31 @@ func (m uiModel) inFlightNames() []string {
 	return names
 }
 
-// Column indices in columns: the STATUS cell is colored by status and the
-// ACCOUNT ID cell identifies a rendered row (it is unique per pipeline and
-// never truncated), which is how selected rows are found again in the
-// laid-out view.
+// Column indices in columns: the STATUS cell is colored by status, the
+// GLOBAL / ACCOUNT cells by their terraform result, and the ACCOUNT ID cell
+// identifies a rendered row (it is unique per pipeline and never truncated),
+// which is how selected rows are found again in the laid-out view.
 const (
-	listStatusCol = 2
-	listKeyCol    = 1
+	listStatusCol  = 2
+	listKeyCol     = 1
+	listGlobalCol  = 3
+	listAccountCol = 4
 )
+
+// resultColWidth fits the widest result cell ("plan +1 ~0 -0") with room for
+// two-digit counts.
+const resultColWidth = 15
 
 func columns(width int) []table.Column {
 	// The table pads every column by 2 (1 each side), so leave 2 per column of
 	// slack or the last column falls off the right edge.
-	name := max(20, width-12-12-18-8)
+	name := max(20, width-12-12-2*resultColWidth-18-12)
 	return []table.Column{
 		{Title: "ACCOUNT NAME", Width: name},
 		{Title: "ACCOUNT ID", Width: 12},
 		{Title: "STATUS", Width: 12},
+		{Title: "GLOBAL", Width: resultColWidth},
+		{Title: "ACCOUNT", Width: resultColWidth},
 		{Title: "LAST UPDATE", Width: 18},
 	}
 }
@@ -267,7 +311,9 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		m.items = msg.items
 		m.resort()
-		return m, m.schedulePoll()
+		var cmd tea.Cmd
+		m, cmd = m.beginResults()
+		return m, tea.Batch(m.schedulePoll(), cmd)
 
 	case refreshedMsg:
 		m.loading = false
@@ -284,10 +330,38 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i, ok := byName[u.PipelineName]; ok {
 				m.items[i] = u
 			}
+			// A running row's results move on while its execution id and
+			// status stay put, so a refresh that finds it still running
+			// reads them again.
+			if u.Status().InFlight() {
+				m.resultsStale[u.PipelineName] = true
+			}
 		}
 		m.applyFilter()
 		m.table.SetCursor(cur) // keep the operator's place
-		return m, m.schedulePoll()
+		var cmd tea.Cmd
+		m, cmd = m.beginResults()
+		return m, tea.Batch(m.schedulePoll(), cmd)
+
+	case resultMsg:
+		e := rowResults{execID: msg.r.ExecutionID, r: msg.r}
+		if msg.err != nil {
+			e.err = msg.err.Error()
+		}
+		for _, it := range m.items {
+			if it.PipelineName == msg.name && it.Latest != nil {
+				e.status = it.Latest.Status
+				break
+			}
+		}
+		m.results[msg.name] = e
+		m.applyFilter()
+		return m, waitResult(m.resultsCh)
+
+	case resultsDoneMsg:
+		m.resultsBusy = false
+		// Rows that changed while this read ran are read now.
+		return m.beginResults()
 
 	case pollMsg:
 		if msg.gen != m.pollGen {
@@ -320,7 +394,7 @@ func (m uiModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 		return m.beginRefreshMany(msg.names)
 
 	case spinner.TickMsg:
-		if !m.loading {
+		if !m.loading && !m.resultsBusy {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -424,6 +498,8 @@ func (m uiModel) handleKey(msg tea.KeyMsg) (screen, tea.Cmd) {
 		if cur < 0 || cur >= len(m.visible) {
 			return m, nil
 		}
+		// Retry the row's results too — a failed read is never stored.
+		m.resultsStale[m.visible[cur].PipelineName] = true
 		return m.beginRefreshOne(m.visible[cur].PipelineName)
 	case "R":
 		if m.loading {
@@ -474,8 +550,13 @@ func (m uiModel) renderTable() string {
 			sel[it.AccountID] = true
 		}
 	}
-	return renderSelectableTable(m.table, listStatusCol, listKeyCol,
-		func(key string) (lipgloss.Style, bool) { return selectedRowStyle, sel[key] })
+	return styleTableCells(m.table.View(), m.table.Columns(), listKeyCol,
+		func(key string) (lipgloss.Style, bool) { return selectedRowStyle, sel[key] },
+		map[int]cellStyler{
+			listStatusCol:  styleStatusCell,
+			listGlobalCol:  styleResultCell,
+			listAccountCol: styleResultCell,
+		})
 }
 
 // openExecutions pushes the execution history screen for the selected row.
@@ -492,6 +573,7 @@ func (m uiModel) openExecutions() tea.Cmd {
 	sel := m.visible[cur]
 	em := newExecsModel(m.ctx, m.execsFn, m.actionsFn, m.logs,
 		sel.PipelineName, sel.AccountName, m.width, m.height)
+	em.results = m.buildResults
 	return func() tea.Msg { return pushMsg{s: em} }
 }
 
@@ -612,6 +694,153 @@ func (m uiModel) beginRefreshMany(names []string) (uiModel, tea.Cmd) {
 	return m, tea.Batch(refreshCmd, waitProgress(ch), m.spin.Tick)
 }
 
+// needResults lists the rows whose results are missing or stale, in the
+// order they should be read: failed rows first (where the answer matters
+// most), then in the order the list shows them — the rows on screen before
+// the ones scrolled off. Rows without a known latest execution have nothing
+// to read.
+func (m uiModel) needResults() []model.PipelineSummary {
+	var failed, rest []model.PipelineSummary
+	seen := map[string]bool{}
+	add := func(it model.PipelineSummary) {
+		if seen[it.PipelineName] || it.Latest == nil || it.Latest.ID == "" || it.FetchError != "" {
+			return
+		}
+		seen[it.PipelineName] = true
+		e, ok := m.results[it.PipelineName]
+		if ok && e.execID == it.Latest.ID && e.status == it.Latest.Status && !m.resultsStale[it.PipelineName] {
+			return
+		}
+		if it.Latest.Status == model.StatusFailed {
+			failed = append(failed, it)
+		} else {
+			rest = append(rest, it)
+		}
+	}
+	for _, it := range m.visible {
+		add(it)
+	}
+	for _, it := range m.items {
+		add(it)
+	}
+	return append(failed, rest...)
+}
+
+// beginResults starts the background read of every row whose results are
+// missing or stale, unless one is already running (its completion calls
+// back here). Each row's results arrive as their own resultMsg, so the
+// columns fill in while the read is still going.
+func (m uiModel) beginResults() (uiModel, tea.Cmd) {
+	if m.resultsFn == nil || m.resultsBusy {
+		return m, nil
+	}
+	need := m.needResults()
+	if len(need) == 0 {
+		return m, nil
+	}
+	for _, it := range need {
+		delete(m.resultsStale, it.PipelineName)
+	}
+	// Buffered for every row, so the workers never wait on the screen.
+	ch := make(chan resultMsg, len(need))
+	m.resultsBusy = true
+	m.resultsCh = ch
+
+	read, ctx := m.resultsFn, m.ctx
+	readCmd := func() tea.Msg {
+		read(ctx, need, func(name string, r model.ExecutionResults, err error) {
+			ch <- resultMsg{name: name, r: r, err: err}
+		})
+		close(ch)
+		return nil
+	}
+	// The header's results indicator spins while the read runs; a spinner
+	// chain already running (a status fetch) simply absorbs this tick.
+	return m, tea.Batch(readCmd, waitResult(ch), m.spin.Tick)
+}
+
+// waitResult relays the next row's results, or resultsDoneMsg once the read
+// is over.
+func waitResult(ch chan resultMsg) tea.Cmd {
+	return func() tea.Msg {
+		r, ok := <-ch
+		if !ok {
+			return resultsDoneMsg{}
+		}
+		return r
+	}
+}
+
+// resultsIndicator is the header's answer to "are the result columns
+// complete?": a spinner while a read runs, a check mark once it is over —
+// kept on screen, so "done" never looks the same as "not started" — and the
+// count of rows that could not be read. The counts cover every row that has
+// results to show, so a start served from cache reads complete at once.
+func (m uiModel) resultsIndicator() string {
+	if m.resultsFn == nil {
+		return ""
+	}
+	have, want := m.resultsCoverage()
+	if want == 0 {
+		return ""
+	}
+	var s string
+	if m.resultsBusy {
+		s = dimStyle.Render("  results ") + m.spin.View() + dimStyle.Render(fmt.Sprintf(" %d/%d", have, want))
+	} else {
+		s = okStyle.Render(fmt.Sprintf("  results ✓ %d/%d", have, want))
+	}
+	if n := m.resultsFailed(); n > 0 {
+		// Never silent: rows showing "?" are counted where they can be seen.
+		s += errStyle.Render(fmt.Sprintf(" · %d unreadable (r retries a row)", n))
+	}
+	return s
+}
+
+// resultsCoverage counts the rows that should show results (a known latest
+// execution) and how many of them have results for that execution.
+func (m uiModel) resultsCoverage() (have, want int) {
+	for _, it := range m.items {
+		if it.Latest == nil || it.Latest.ID == "" || it.FetchError != "" {
+			continue
+		}
+		want++
+		if e, ok := m.results[it.PipelineName]; ok && e.execID == it.Latest.ID {
+			have++
+		}
+	}
+	return have, want
+}
+
+// resultsFailed counts the rows whose current results could not be read.
+func (m uiModel) resultsFailed() int {
+	n := 0
+	for _, it := range m.items {
+		if e, ok := m.results[it.PipelineName]; ok && e.err != "" &&
+			it.Latest != nil && e.execID == it.Latest.ID {
+			n++
+		}
+	}
+	return n
+}
+
+// resultCells renders a row's GLOBAL and ACCOUNT cells. Results read for an
+// older execution than the row now shows are not shown: "…" until the new
+// ones arrive, rather than last run's numbers under this run's status.
+func (m uiModel) resultCells(it model.PipelineSummary) (global, account string) {
+	if it.Latest == nil || it.FetchError != "" {
+		return "-", "-"
+	}
+	e, ok := m.results[it.PipelineName]
+	if !ok || e.execID != it.Latest.ID {
+		return "…", "…"
+	}
+	if e.err != "" && e.r.Global == nil && e.r.Account == nil {
+		return "?", "?"
+	}
+	return e.r.Global.Short(), e.r.Account.Short()
+}
+
 // resort re-sorts items by the current key/order and rebuilds the rows.
 func (m *uiModel) resort() {
 	model.SortSummaries(m.items, m.sortKey, m.sortOrder)
@@ -642,7 +871,8 @@ func (m *uiModel) applyFilter() {
 		if name == "" {
 			name = "-"
 		}
-		rows = append(rows, table.Row{name, it.AccountID, string(rowStatus(it)), last})
+		global, acct := m.resultCells(it)
+		rows = append(rows, table.Row{name, it.AccountID, string(rowStatus(it)), global, acct, last})
 		visible = append(visible, it)
 	}
 	m.table.SetRows(rows)
@@ -654,6 +884,7 @@ var (
 	titleStyle     = lipgloss.NewStyle().Bold(true)
 	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	activeDotStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 )
 
@@ -681,6 +912,7 @@ func (m uiModel) View() string {
 	} else {
 		header += dimStyle.Render(fmt.Sprintf("  %d shown / %d total", len(m.table.Rows()), len(m.items)))
 	}
+	header += m.resultsIndicator()
 	b.WriteString(header + "\n")
 
 	if m.filtering || m.filter.Value() != "" {

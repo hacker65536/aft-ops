@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+
+	"github.com/hacker65536/aft-ops/internal/core/model"
 )
 
 // a representative slice of a CodeBuild log wrapping a terraform apply.
@@ -223,23 +226,170 @@ func TestFetchRefetchesInFlightBuild(t *testing.T) {
 	}
 }
 
-// Verdict picks the one line that concludes the run: the (possibly boxed)
-// error header first, else the apply verdict, else the plan verdict.
-func TestVerdict(t *testing.T) {
-	applied := []string{
-		"Plan: 1 to add, 0 to change, 0 to destroy.",
-		"Apply complete! Resources: 1 added, 0 changed, 0 destroyed.",
+// ParseVerdict concludes the run from the one line that decides it: the
+// (possibly boxed) error header first, else the apply verdict, else the plan
+// verdict — and reads the counts out of it.
+func TestParseVerdict(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines []string
+		want  model.TerraformResult
+	}{
+		{
+			name: "applied",
+			lines: []string{
+				"Plan: 1 to add, 0 to change, 0 to destroy.",
+				"Apply complete! Resources: 1 added, 0 changed, 2 destroyed.",
+			},
+			want: model.TerraformResult{Kind: model.ResultApplied, Add: 1, Destroy: 2,
+				Line: "Apply complete! Resources: 1 added, 0 changed, 2 destroyed."},
+		},
+		{
+			// sampleLog fails with a boxed error; that beats the plan line.
+			name:  "error beats plan",
+			lines: sampleLog,
+			want: model.TerraformResult{Kind: model.ResultError,
+				Line: "Error: creating S3 Bucket: BucketAlreadyExists"},
+		},
+		{
+			name:  "no changes",
+			lines: []string{"No changes. Your infrastructure matches the configuration."},
+			want: model.TerraformResult{Kind: model.ResultNoChanges,
+				Line: "No changes. Your infrastructure matches the configuration."},
+		},
+		{
+			// An all-zero apply says nothing happened, exactly like "No
+			// changes." — it must not show up as numbers in the list.
+			name:  "zero apply folds into no changes",
+			lines: []string{"Apply complete! Resources: 0 added, 0 changed, 0 destroyed."},
+			want: model.TerraformResult{Kind: model.ResultNoChanges,
+				Line: "Apply complete! Resources: 0 added, 0 changed, 0 destroyed."},
+		},
+		{
+			name:  "destroy names only what it destroyed",
+			lines: []string{"Destroy complete! Resources: 3 destroyed."},
+			want: model.TerraformResult{Kind: model.ResultApplied, Destroy: 3,
+				Line: "Destroy complete! Resources: 3 destroyed."},
+		},
+		{
+			name:  "plan only",
+			lines: []string{"Plan: 2 to add, 1 to change, 0 to destroy."},
+			want: model.TerraformResult{Kind: model.ResultPlan, Add: 2, Change: 1,
+				Line: "Plan: 2 to add, 1 to change, 0 to destroy."},
+		},
+		{
+			name:  "no terraform",
+			lines: []string{"no terraform here"},
+			want:  model.TerraformResult{Kind: model.ResultUnknown},
+		},
 	}
-	if got := Verdict(applied); got != "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." {
-		t.Errorf("applied verdict = %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ParseVerdict(tc.lines); got != tc.want {
+				t.Errorf("ParseVerdict = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// pagedBuilds answers BatchGetBuilds for every id it is asked about and
+// records the size of each request.
+type pagedBuilds struct{ requests []int }
+
+func (f *pagedBuilds) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInput,
+	_ ...func(*codebuild.Options)) (*codebuild.BatchGetBuildsOutput, error) {
+	f.requests = append(f.requests, len(in.Ids))
+	out := &codebuild.BatchGetBuildsOutput{}
+	for _, id := range in.Ids {
+		out.Builds = append(out.Builds, cbtypes.Build{
+			Id: aws.String(id), BuildComplete: true,
+			Logs: &cbtypes.LogsLocation{GroupName: aws.String("g"), StreamName: aws.String(id)},
+		})
+	}
+	return out, nil
+}
+
+// Locate batches ids up to the API's limit of 100 per call.
+func TestLocateBatchesIDs(t *testing.T) {
+	cb := &pagedBuilds{}
+	s := &Service{CodeBuild: cb}
+	ids := make([]string, 150)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("proj:%d", i)
+	}
+	got, err := s.Locate(context.Background(), ids)
+	if err != nil {
+		t.Fatalf("Locate: %v", err)
+	}
+	if len(got) != 150 {
+		t.Errorf("located %d builds, want 150", len(got))
+	}
+	if len(cb.requests) != 2 || cb.requests[0] != 100 || cb.requests[1] != 50 {
+		t.Errorf("BatchGetBuilds request sizes = %v, want [100 50]", cb.requests)
+	}
+}
+
+// tailEvents records whether it was read from the end, and with what limit.
+type tailEvents struct {
+	fromHead []bool
+	limits   []int32
+}
+
+func (f *tailEvents) GetLogEvents(_ context.Context, in *cloudwatchlogs.GetLogEventsInput,
+	_ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetLogEventsOutput, error) {
+	f.fromHead = append(f.fromHead, aws.ToBool(in.StartFromHead))
+	f.limits = append(f.limits, aws.ToInt32(in.Limit))
+	return &cloudwatchlogs.GetLogEventsOutput{
+		Events: []cwltypes.OutputLogEvent{{Message: aws.String("Apply complete! Resources: 1 added, 0 changed, 0 destroyed.\n")}},
+	}, nil
+}
+
+// Tail reads one page from the end of the stream — and none at all when the
+// build's full log is already memoized.
+func TestTailReadsOnePageFromTheEnd(t *testing.T) {
+	cwl := &tailEvents{}
+	s := &Service{CodeBuild: &fakeBuilds{complete: true}, Logs: cwl}
+	b := Build{ID: "proj:uuid", Group: "g", Stream: "s", Complete: true}
+
+	lines, err := s.Tail(context.Background(), b)
+	if err != nil {
+		t.Fatalf("Tail: %v", err)
+	}
+	if len(cwl.fromHead) != 1 || cwl.fromHead[0] {
+		t.Errorf("GetLogEvents calls (fromHead) = %v, want one read from the end", cwl.fromHead)
+	}
+	// Only the last lines are asked for, not the API's default page of up to
+	// 1 MB — the fan-out reads two logs per pipeline.
+	if cwl.limits[0] != tailLines {
+		t.Errorf("tail limit = %d, want %d", cwl.limits[0], tailLines)
+	}
+	if got := ParseVerdict(lines).Kind; got != model.ResultApplied {
+		t.Errorf("verdict of the tail = %s, want applied", got)
 	}
 
-	// sampleLog fails with a boxed error; that beats the plan line.
-	if got := Verdict(sampleLog); got != "Error: creating S3 Bucket: BucketAlreadyExists" {
-		t.Errorf("failed verdict = %q", got)
+	if _, err := s.FetchBuild(context.Background(), b); err != nil {
+		t.Fatalf("FetchBuild: %v", err)
 	}
+	calls := len(cwl.fromHead)
+	if _, err := s.Tail(context.Background(), b); err != nil {
+		t.Fatalf("Tail (memo): %v", err)
+	}
+	if len(cwl.fromHead) != calls {
+		t.Error("Tail of a memoized build should not call the API")
+	}
+}
 
-	if got := Verdict([]string{"no terraform here"}); got != "" {
-		t.Errorf("no-verdict log should yield empty, got %q", got)
+// DefaultLocation splits a build id into CodeBuild's default log group and
+// stream; an id without that shape has none.
+func TestDefaultLocation(t *testing.T) {
+	b, ok := DefaultLocation("aft-account-customizations-terraform:0149-uuid", true)
+	if !ok || b.Group != "/aws/codebuild/aft-account-customizations-terraform" ||
+		b.Stream != "0149-uuid" || !b.Complete {
+		t.Errorf("DefaultLocation = %+v, %v", b, ok)
+	}
+	for _, id := range []string{"no-colon", ":uuid", "project:"} {
+		if _, ok := DefaultLocation(id, true); ok {
+			t.Errorf("DefaultLocation(%q) should have no location", id)
+		}
 	}
 }

@@ -72,7 +72,8 @@ aft-ops/
 │   │   ├── model/               # ドメインモデル（Pipeline, Account, Execution, StageState...）
 │   │   ├── pipeline/            # 一覧・詳細・release のサービス
 │   │   ├── account/             # アカウント解決サービス
-│   │   └── logs/                # CodeBuild ログ取得・terraform ログ抽出
+│   │   ├── logs/                # CodeBuild ログ取得・terraform ログ抽出・結論の判定
+│   │   └── result/              # 実行・build ごとの terraform 結果（一覧 / Actions 共通。§4.6）
 │   ├── batch/                   # 逐次バッチエンジン
 │   ├── cache/                   # TTL ファイルキャッシュ
 │   ├── metrics/                 # API 計測（SDK middleware + 集計）
@@ -382,6 +383,158 @@ F10（trigger ドリフト）とは因果でつながっている。trigger を�
 merge しても発火しないため未適用コミットが積み上がり続ける。両者は同じ画面で
 並べて意味を持つ。
 
+### 4.6 一覧の terraform 結果列（F13・read-only）
+
+一覧に各パイプラインの**最新実行**の terraform 結果を global / account の 2 列で出す。
+これまで Actions 画面（§9.1）だけが持っていた「ログから結論を取り出す」処理を core に
+引き上げ、一覧・Actions 画面・CLI の 3 つが同じ部品を使う。
+
+```
+ACCOUNT NAME     ACCOUNT ID    STATUS      GLOBAL     ACCOUNT    LAST UPDATE
+app-staging      123456789012  Succeeded   +0 ~1 -0   ·          2026-10-07 10:44
+payments-prod    111122223333  Failed      ✗ error    —          2026-10-07 10:40
+search-dev       444455556666  InProgress  ·          running    2026-10-07 10:57
+data-lake-prod   777788889999  Succeeded   …          …          2026-10-07 10:35
+```
+
+#### 判定（`core/logs`）と表示の分離
+
+`logs.Verdict`（結論 1 行の文字列を返す）を、構造化した結果を返す `logs.ParseVerdict` に
+置き換える。判定規則（`Error:` 優先 → `Apply complete!` / `Destroy complete!` / `No changes.`
+→ `Plan:`）は現行のまま変えない。記号にするか 1 行の文章で出すかは表示層が決める。
+
+```go
+type TerraformResult struct {
+    Kind    ResultKind // applied | no_changes | error | failed | plan | running | not_run | unknown
+    Add, Change, Destroy int
+    Line    string     // 判定の根拠になった行（Actions 画面・JSON はこれを出す）
+}
+```
+
+| Kind | 条件 | 一覧の表示 | 色 |
+|---|---|---|---|
+| （未取得） | 取得待ち・取得中 | `…` | グレー |
+| `applied` | `Apply complete!` / `Destroy complete!`（後者は destroy 数のみ） | `+0 ~1 -0` | 0 以外の数を緑 / 黄 / 赤 |
+| `no_changes` | `No changes.`、または apply の 3 数がすべて 0 | `·` | グレー |
+| `error` | `Error:` 行あり | `✗ error` | 赤 |
+| `failed` | アクションは Failed だが `Error:` 行なし（terraform 以前・以後で落ちた） | `✗ failed` | 赤 |
+| `plan` | `Plan:` 行しかない（apply に至らなかった） | `plan +1 ~0 -0` | グレー |
+| `running` | build が終わっていない | `running` | 黄 |
+| `not_run` | 最新実行にそのステージのアクションが無い（前段の失敗等） | `—` | グレー |
+| `unknown` | 結論行が見つからない、またはログ取得に失敗 | `?` | グレー |
+
+- `no_changes` に「apply の 3 数がすべて 0」を含めるのは、全行が `+0 ~0 -0` だと
+  **変更のあった行が埋もれる**ため。数字が出ている行＝何かが起きた行、にする
+- global / account の振り分けはステージ名（AFT が定義する `Global-Customizations` /
+  `Account-Customizations`）で行う。どちらにも当たらないステージは列に出さない
+
+#### 取得（`core/result`）
+
+```
+ForExecution(pipeline, exec) → {Global, Account TerraformResult}
+  = 終端 execution で保存済みなら API 0 回
+  = ListActionExecutions（終端 execution は session memo）
+  + ForActions(その実行の global / account の build)
+ForActions(actions) → build id ごとの TerraformResult
+  = 実行中の build は読まずに running
+  + 保存済みの build は API 0 回
+  + 残りは build ごとに GetLogEvents（既定の場所の末尾 300 行）→ ParseVerdict
+```
+
+- **ログは末尾から読む**: `StartFromHead=false`・`Limit=300` の 1 回で結論行はほぼ取れる
+  （既定の 1 ページは最大 1MB / 10,000 行。全 pipeline × 2 本を毎回それだけ落とさない）。結論行が無かったときだけ全文を取りに行く（`logs.Service.FetchBuild`。
+  session memo に入るので、続けてログ画面を開くと即表示になる）
+- **BatchGetBuilds を呼ばない**: ログの場所は CodeBuild の既定（group `/aws/codebuild/<project>`・
+  stream `<build id の uuid>`）から組み立てる（`logs.DefaultLocation`）。実環境の AFT で
+  実物を確認済み。既定の場所が無い（`ResourceNotFoundException`）ときだけ BatchGetBuilds で引き直す
+  - 理由は実測: 当初は実行単位で BatchGetBuilds を呼んでいたが、**CodeBuild がこの呼び出しを
+    throttle した**（約 200 件の初回で、BatchGetBuilds の試行の約 6 回に 1 回）。adaptive retry がクライアント側の流量制御を
+    入れ、`locate` が最大 42 秒止まり、worker が詰まって全体が律速された（結果取得 79 秒）
+- **アクションが Failed なのに `Error:` 行が無い**ものは `failed` にする（terraform の前後、
+  helper script やコンテナで落ちた）。apply の件数が読めていても残したうえで `failed` に
+  する — 失敗した実行の結果列が「きれいな apply」に見えてはいけない
+- 保存（§7）は 2 段: build id ごとの結論（Actions 画面と共有）と、終端 execution ごとの
+  2 層の結論（一覧の再起動直後を API 0 回にする）。**読めなかった結論・結論行の無い結論
+  （`unknown`）・実行中のものは保存しない**。`unknown` を外すのは、build 完了直後は CloudWatch
+  への取り込みが遅れて末尾が欠けていることがあり、保存すると `?` が固定されてしまうため
+- **トレードオフ**: Actions 画面はこれまで全文を取得しており、それがログ画面の先読みを
+  兼ねていた。末尾だけを読む方式ではこの先読みが無くなり、ログ画面を初めて開くと
+  全文の取得を待つ。ログ画面を開くのは一部の行だけなので、全行の全文を取るより
+  安く済む方を採る
+
+#### 遅延取得（TUI 一覧）
+
+- status が揃った時点で一覧を描画し、結果列は `…` のまま出す。その後バックグラウンドで
+  結果を取得し、**1 行終わるごとにその行を更新する**（全件終了を待ってまとめて反映しない）
+- 取得順は投入時に決める: Failed の行 → 現在のソート順で上から（＝見えている行から）。
+  スクロールに応じた並べ替えはしない（v1）
+- 対象は「結果が未知の行」だけ。キャッシュで埋まる行は API を呼ばずに即座に埋まる
+- 再取得・自動ポーリング（§9.1）で行の最新 execution id が変わったら、その行を再投入する。
+  同じ execution のまま終端状態に変わった行（`running` だった行）も再投入する
+- 手動の `r`（選択行の再取得）は結果も読み直す。読めなかった行の再試行手段を兼ねる
+- header に進捗（`results ⠋ 120/200`、完了後は `results ✓ 200/200`）と、読めなかった行の件数（`results: N unreadable`）を出す。
+  読めなかった行は `?`
+- 一度に走る取得は 1 本だけ。取得中に状態が変わった行は、その取得が終わったときに拾う
+
+#### レート制御 — バッチエンジンの変更を伴う
+
+現行の `batch.Run` は **Run ごとに** token bucket を持ち、**item 単位**で入場を制御している
+（§5）。既存の fan-out は 1 item = API 1 回なので RPS と呼び出し数が一致していたが、
+結果取得は 1 item = API 2〜3 回で、しかも status のポーリングと**同時に走る**。
+このままでは実際の呼び出し数が設定 RPS の数倍になる。
+
+- **token bucket は API 呼び出し単位・AWS サービスごと・プロセスで 1 組**（`awsx.Limits` /
+  `awsx.RateLimit`。Finalize step の Retry の後ろに置くので、計測（§6）と同じく試行ごとに
+  1 トークン）。read / write の両 client が同じ `Limits` を持つ
+  - **サービスごとに分けるのは、AWS のクォータがサービスごとに別枠だから**。当初は 1 本の
+    bucket を全サービスで共有していたが、実測（実環境・約 200 件・初回）で約 1,000 回の呼び出しが
+    ちょうど 8 回/秒で進み、throttle 0 件・p50 40〜150ms だった。律速は AWS ではなく自前の
+    bucket で、ログ読み取りが CodePipeline の呼び出しの後ろに並んでいた
+  - 既定は `batch.rps: 8`（各サービス）と `batch.service_rps.logs: 16`。結果取得は 1 pipeline
+    あたり CodePipeline 1 回に対して Logs 2 回なので、Logs を倍にすると両者が同じ速さで進む
+    （GetLogEvents 自体のクォータの範囲内）。`--rps` は全サービスを一括で上書きする
+  - 「20 並列で throttle」の実績は CodePipeline のもの。CodePipeline の既定は据え置く
+- CodeBuild の BatchGetBuilds は毎秒 4 回弱でも throttle された（上記）。結果取得では呼ばない
+  ので既定は据え置くが、多数の build を引く用途を足すときは低い値を設定すること
+- `batch.Config.RPS` は CLI / TUI からは 0（item 単位の制限なし）で使う。item でも
+  制限すると、**キャッシュで済む item まで使わないトークンを待つ**ことになる
+  （demo では 42 件の結果がすべて保存済みでも 5 秒かかった）。並列度・チャンク・進捗だけを受け持つ
+- demo モードには SDK client が無いので、fake の各呼び出し（`demo.Env.tick`）が同じ `Limits` を
+  サービス名つきで待つ
+- `batch.Each` を足した（item ごとの結果通知。`batch.Run` は `onProgress` で件数しか運ばない）
+
+#### コスト見積もり（数百件・RPS 8）
+
+| | 1 pipeline あたり | 全体（約 200 件） |
+|---|---|---|
+| 素朴に実装（全文取得・BatchGetBuilds 個別） | 約 7 回 | 約 1,500 回・3 分強 |
+| 本設計・保存なし（初回）・単一 bucket | 4 回（ListActionExecutions 1・BatchGetBuilds 1・GetLogEvents 2） | 約 850 回・実測 107 秒（status 込み 134 秒） |
+| サービス別 bucket（BatchGetBuilds あり） | 同上 | 実測 79 秒（CodeBuild の throttle で詰まる。status 込み 107 秒） |
+| サービス別 bucket・BatchGetBuilds なし（採用） | 3 回（ListActionExecutions 1・GetLogEvents 2） | **実測 27 秒**（CodePipeline 8 回/秒が律速。status 込み 56.5 秒・throttle 0） |
+| 本設計・2 回目以降 | 新しく実行されたものだけ | 数回〜数十回 |
+
+素朴な実装の回数は計測記録の実績（1 build あたり GetLogEvents 約 2 ページ）から見積もった。
+demo fixture（42 件）の実測: 保存なし 26 秒（単一 bucket）→ 11.8 秒（サービス別）、
+結果取得だけなら約 21 秒 → 5.5 秒。全件保存済みは 0.4 秒。
+さらに縮めるなら `batch.service_rps.codepipeline` を `metrics show` の throttle 率を見ながら上げる。
+初回の待ち時間は一覧の表示を止めない（遅延取得）ので、体感は「列が順に埋まっていく」になる。
+
+#### CLI
+
+- `pipeline list --results` で GLOBAL / ACCOUNT 列を追加する。指定しなければ取得しない
+  （`pipeline list` の応答時間を変えない）
+- JSON は各行に `results.global` / `results.account`（`kind` / `add` / `change` / `destroy` /
+  `line`）を追加する。追加なので `schema_version` は据え置き
+- フィルタ（`--status` / `--account`）の後に読む。表示しない行のログは読まない
+- 読めなかった行は表の `?` と、stderr の `results: N unreadable (first: …)` で示す。JSON は
+  その行に `results_error` を持つ
+- `pipeline executions --actions` には出さない（いまはログを読んでいない。足すとコストだけが増える）
+
+#### 範囲外（v1）
+
+- 結果列での filter / sort（「変更があった行だけ」等）。必要になったら第 2 段階で足す
+- 最新以外の実行の結果を一覧に出すこと
+
 ## 5. 逐次バッチエンジン（internal/batch）
 
 要件 F4 の中核。「チャンク逐次 × チャンク内並列」+ レート制御 + 計測。
@@ -400,7 +553,8 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 ```
 
 設計ポイント:
-- **worker pool + rate.Limiter の二段制御**: 並列度（同時実行数）と RPS（毎秒呼び出し数）を独立に制御。実測で throttle が出ない範囲から既定は Concurrency=10 / RPS=8 程度で開始し、計測結果で調整
+- **worker pool + rate.Limiter の二段制御**: 並列度（同時実行数）と RPS（毎秒呼び出し数）を独立に制御。
+  （F13 で token bucket を API 呼び出し単位・AWS サービスごとに移した。§4.6「レート制御」）実測で throttle が出ない範囲から既定は Concurrency=10 / RPS=8 程度で開始し、計測結果で調整
 - **リトライ**: SDK v2 の `retry.AddWithMaxAttempts` + adaptive mode を基本とし、Throttling は指数バックオフ + ジッタ。リトライ発生は metrics に記録
 - **キャンセル**: ctx キャンセル（Ctrl-C）で新規投入を止め、実行中のみ完走して部分結果を返す
 - **進捗通知**: `chan Progress` を公開し、CLI はプログレスバー、TUI は画面更新に利用
@@ -410,6 +564,9 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 「実装しながら高精度に分析したい」（要件 F4）に対応する一級機能。
 
 - AWS SDK v2 の **middleware** で全 API 呼び出しをフック: サービス/オペレーション/所要時間/成否/Throttling 有無を記録
+  （Deserialize step の**先頭**に置く。操作ごとの deserializer より外側でないと、HTTP 400 の
+  ThrottlingException がエラーに見えず throttle が 0 件と記録される。F13 の実測でこの不具合が
+  見つかり修正した。それ以前の記録の throttle 0 件は、試行回数＝呼び出し回数のときだけ信用できる）
 - 実行ごとに `~/.local/state/aft-ops/metrics/<timestamp>.jsonl` に追記
 - `aft-ops metrics show [--last N]`: オペレーション別の呼び出し数・p50/p99/max・throttle 率を集計表示。
   レイテンシは平均ではなく**パーセンタイル**（nearest-rank）。並列度・RPS の調整は throttle と
@@ -436,6 +593,7 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 | pipeline 存在一覧 | ListPipelines | 6h |
 | 実行ステータス（per-entry） | ListPipelineExecutions | 10m（`status_ttl`）。実行中は常に再取得 |
 | pipeline trigger（per-entry） | GetPipeline | 1h（`trigger_ttl`）。定義は書き換えられたときしか変わらない |
+| terraform 結果（build id ごと / 終端 execution ごと。1 ファイル `terraform-results`） | BatchGetBuilds + GetLogEvents → `ParseVerdict` | 完了 build・終端 execution のみ・TTL なし（不変）。読めなかったものは保存しない。`results_max_age`（既定 30 日）を過ぎたものは書き込み時に削除。ログ本文は保存しない（§4.6） |
 
 セッション内メモリ memo（TUI 起動中のみ・ディスクに書かない）:
 
@@ -443,7 +601,7 @@ func Run[T, R any](ctx context.Context, cfg Config, items []T,
 |---|---|---|
 | 実行履歴（executions 画面） | ListPipelineExecutions | 15m（`executions_ttl`、0 で無効）。先頭実行が in-flight なら常に再取得。`r` で強制 |
 | アクション実行（actions 画面 / `v`） | ListActionExecutions | 終端 execution のみ無期限（不変）。in-flight は毎回 |
-| build ログ（log 画面） | BatchGetBuilds + GetLogEvents | 完了 build のみ無期限（不変）。実行中は毎回 |
+| build ログ（log 画面） | BatchGetBuilds + GetLogEvents | 完了 build のみ無期限（不変）。実行中は毎回。全文はここだけで取得する（結果列は末尾 1 ページ。§4.6） |
 
 - 保存先: `~/.cache/aft-ops/<org-id or profile>/` （プロファイル毎に分離し、業務/PoC org の取り違えを構造的に防止）
 - 形式: JSON + メタデータ（取得時刻・スキーマバージョン・取得元プロファイル）
@@ -477,6 +635,7 @@ aft-ops pipeline list            # F1: 状態一覧（alias: pl ls）。status �
     --order asc|desc             # 既定 desc（未実行=時間なしは常に末尾）
     --refresh                    # 全 status を強制再取得（inventory/accounts も）
     --watch [--interval 30s]     # 定期再取得（既定間隔は tui.poll_interval）。table 出力専用
+    --results                    # F13: 最新実行の terraform 結果（GLOBAL / ACCOUNT 列）も取得（§4.6）
 aft-ops pipeline refresh [target...]  # 指定パイプラインの status だけ再取得しキャッシュ更新
     --account <name|id|部分一致>  # グループ指定
 aft-ops pipeline show <target>   # F2: 詳細（ステージ/実行履歴）
@@ -582,6 +741,9 @@ CodePipeline の実データモデル（pipeline → executions → action execu
 [Pipeline List] ──x──▶ [Release]  (confirm → run → results)
 ```
 
+- 一覧の結果列（F13・実装済み）: GLOBAL / ACCOUNT 列を STATUS と LAST UPDATE の間に置き、
+  status 表示後に行ごとに遅延取得して埋める。記号・色・取得順・再投入の規則は §4.6。
+  色付けは STATUS と同じく描画済みの view への後段処理（`styleTableCells` が複数列を扱う）
 - 一覧キー（実装済み）: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
   (last-update→status→account)・`o` 昇降順トグル・`l`/`enter` 実行履歴画面・`v` ログ直行・
   `space` 選択トグル・`x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。
@@ -627,7 +789,10 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   設けない — AFT パイプラインはアクション数が少なく詳細が薄いため）。ロード完了後、
   終端 CodeBuild アクションのログをバックグラウンドで遅延取得し、terraform の結論 1 行
   （`logs.Verdict`: `Error:` 優先 → `Apply complete!`/`No changes.` → `Plan:`）を summary に
-  表示する。verdict 中の add/change/destroy 数値は 0 以外を緑/黄/赤（terraform の plan 色）で
+  表示する。**F13 で変更（§4.6）**: 取得は `result.Service.ForActions`（一覧の結果列と同じ経路・
+  同じ保存）に寄せた。一覧で取得済みの結果は API なしで即表示。summary の表示（1 行の文章）は
+  変えない。末尾 1 ページだけを読むため、下記のログ画面の先読みは（結論行が末尾に無い build を
+  除いて）無くなった。verdict 中の add/change/destroy 数値は 0 以外を緑/黄/赤（terraform の plan 色）で
   着色（表示層で幅クリップ後に適用）。この取得は log memo を温めるため、続けてログ画面を
   開くと即表示になる。
   build id を持つアクションで `l`/`enter`/`v` → ログ画面・`h`/`q`/`esc` で戻る
@@ -650,8 +815,8 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   モード切替時は新しい描画に対して再検索される。
   **完了 build のログはセッション内メモリに memoize**（`logs.Service` 保持。build ログは
   完了後は不変のため安全）: 同一セッションで同じログを再訪しても API を叩かない。
-  実行中 build は毎回再取得。ディスクには書かない（ディスクキャッシュは §4.1 の
-  アカウント map・パイプライン一覧のみのまま）
+  実行中 build は毎回再取得。ログ本文はディスクに書かない（ディスクに残すのは
+  そこから読んだ terraform の結論だけ。§4.6 / §7）
 - `v` ログ直行（実装済み）: 「失敗した → terraform ログを見る」という最頻ケースの 1 打鍵ショートカット。
   解決不能時はエラーをその場に表示。
   - 一覧: 行が保持する最新 execution の `ActionExecutions`（ListActionExecutions 1 回）→
@@ -720,7 +885,11 @@ aft_metadata_table: aft-request-metadata  # account_source: aft-dynamodb のと�
 
 batch:
   concurrency: 10
-  rps: 8
+  rps: 8               # API 呼び出し / 秒（AWS サービスごと。0 で無制限）
+  service_rps:         # サービス別の上書き（0 = rps を使う）。§4.6
+    codepipeline: 0
+    codebuild: 0
+    logs: 16
   chunk_size: 0        # 0 = チャンク分割なし
   chunk_pause: 0s
 
@@ -731,6 +900,7 @@ cache:
   status_ttl: 10m      # 実行ステータスのキャッシュ TTL（0 で無効化＝毎回 fan-out）
   trigger_ttl: 1h      # pipeline trigger のキャッシュ TTL（0 で無効化＝毎回 fan-out）
   executions_ttl: 15m  # 実行履歴（TUI executions 画面）のセッション内 memo TTL（0 で無効化）
+  results_max_age: 720h  # terraform 結果・終端アクションのディスクキャッシュの保持期間（§4.6）
 
 release:
   max_targets: 50
@@ -873,7 +1043,7 @@ metrics はデモ時に無効化する（フェイク呼び出しは SDK middlew
 |---|---|---|
 | 1 | リポジトリ骨格 / config / awsx / cache / account 解決 / batch（最小: 並列度+RPS+リトライ） / `pipeline list` / `pipeline release`（単発+ガード） / TUI 一覧画面 / metrics（記録のみ） | **実装済** |
 | 2 | `pipeline show` / `pipeline executions` / `pipeline refresh` / `pipeline logs`（terraform 抽出・summary） / batch 完全版（チャンク・進捗） / `pipeline release` バッチ / `pipeline triggers`（F10・§4.4） / TUI 詳細・ログ画面・multi-select / `metrics show` | **実装済** |
-| 3 | §4.5 収束実行（F11 + F12）: リビジョン×ステージ判定 / チャンクゲート / 完了モニタリング / 未適用コミット検出 | 未着手 |
+| 3 | §4.6 一覧の terraform 結果列（F13）: `ParseVerdict` / `core/result` / レート制御の移設 / 一覧・Actions・CLI の共通化 ・ §4.5 収束実行（F11 + F12）: リビジョン×ステージ判定 / チャンクゲート / 完了モニタリング / 未適用コミット検出 | F13 実装済。F11 / F12 は未着手 |
 | 4 | account-request（DynamoDB）/ Step Functions 状態 / 共通系パイプライン（F9） | 未着手 |
 | 5 | OSS 公開整備（英語 docs・goreleaser・Homebrew tap・LICENSE） | 一部先行済（goreleaser / homebrew_casks / LICENSE / CI は導入済。英語ドキュメントが残り） |
 
@@ -889,4 +1059,4 @@ Phase 番号は requirements §8 と一対一で対応させる。片方だけ�
 | ~~D4~~ | ~~TUI のログ画面で CloudWatch Logs Live Tail を使うか~~ | **解決済**: 使わない。`core/logs` は `GetLogEvents` のページングで実装。終端 build のログは不変でキャッシュが効くため、常時接続の利得が無い |
 | ~~D5~~ | ~~設定実装~~ | **解決済**: YAML 単一フォーマット・`yaml.v3` + 自前マージ（viper は依存過多のため不採用） |
 | D6 | F12 のカナリアゲート以降、止められない先行投入範囲をどこまで許容するか | requirements U8。`execution の所要時間 ÷ chunk_pause` で決まる |
-| D7 | F12 の判定に terraform の apply サマリ行まで含めるか | requirements U7。ステージの成否だけなら AFT の出力形式に依存しない |
+| D7 | F12 の判定に terraform の apply サマリ行まで含めるか | requirements U7。ステージの成否だけなら AFT の出力形式に依存しない。F13（§4.6）が `ParseVerdict` で apply サマリ行を構造化するので、含める場合はそれを使える |

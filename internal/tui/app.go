@@ -49,6 +49,19 @@ type ActionsFunc func(ctx context.Context, name, execID string, done bool) ([]mo
 // rendering locally, so switching modes needs no refetch.
 type LogsFunc func(ctx context.Context, buildID string) ([]string, error)
 
+// ResultsFunc reads the terraform result of each pipeline's latest execution
+// (wired to result.Service.ForExecution through the batch engine). It blocks
+// until every item has settled, handing each one to onResult as soon as it
+// does, so the list can fill its result columns row by row. Items whose
+// latest execution is unknown are not passed in.
+type ResultsFunc func(ctx context.Context, items []model.PipelineSummary,
+	onResult func(name string, r model.ExecutionResults, err error))
+
+// BuildResultsFunc reads the terraform result of each given action run's
+// build, keyed by build id (wired to result.Service.ForActions). The actions
+// screen uses it for its summary line; it shares the list's results cache.
+type BuildResultsFunc func(ctx context.Context, actions []model.ActionExecution) (map[string]model.TerraformResult, error)
+
 // ReleaseFunc triggers Release change on the given targets (wired to
 // pipeline.Service.Release with the write client). It reports the per-target
 // results; the guard (max targets) and in-progress skipping live in the core,
@@ -64,6 +77,8 @@ type Deps struct {
 	Executions   ExecutionsFunc
 	Actions      ActionsFunc
 	Logs         LogsFunc
+	Results      ResultsFunc
+	BuildResults BuildResultsFunc
 	Release      ReleaseFunc
 	ReleaseLimit int // guard: max targets per release (0 = no limit)
 	// PollInterval re-refetches in-flight pipelines on the list screen while

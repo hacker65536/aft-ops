@@ -493,6 +493,28 @@ func (c *LogsClient) GetLogEvents(ctx context.Context, in *cloudwatchlogs.GetLog
 		}
 	}
 
+	ts := start.UnixMilli()
+	if !aws.ToBool(in.StartFromHead) && in.NextToken == nil {
+		// Read from the end, like the real API without a token: the newest
+		// page, in chronological order, with a token pointing further back.
+		page := logPageSize
+		if n := int(aws.ToInt32(in.Limit)); n > 0 && n < page {
+			page = n
+		}
+		from := max(len(lines)-page, 0)
+		out := &cloudwatchlogs.GetLogEventsOutput{
+			NextForwardToken:  aws.String(forwardToken(len(lines))),
+			NextBackwardToken: aws.String(forwardToken(from)),
+		}
+		for i := from; i < len(lines); i++ {
+			out.Events = append(out.Events, cwtypes.OutputLogEvent{
+				Message:   aws.String(lines[i] + "\n"),
+				Timestamp: aws.Int64(ts + int64(i)*250),
+			})
+		}
+		return out, nil
+	}
+
 	offset := parseForwardToken(in.NextToken)
 	if offset >= len(lines) {
 		return &cloudwatchlogs.GetLogEventsOutput{
@@ -500,7 +522,6 @@ func (c *LogsClient) GetLogEvents(ctx context.Context, in *cloudwatchlogs.GetLog
 		}, nil
 	}
 	end := min(offset+logPageSize, len(lines))
-	ts := start.UnixMilli()
 	out := &cloudwatchlogs.GetLogEventsOutput{
 		NextForwardToken: aws.String(forwardToken(end)),
 	}

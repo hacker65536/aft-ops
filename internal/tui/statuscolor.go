@@ -114,11 +114,114 @@ func renderSelectableTable(t table.Model, statusCol, keyCol int, rowStyle rowSty
 // the cursor row, all styled by the table itself — are skipped; the cursor row
 // conveys the same state through its highlight (see cursorTint).
 func styleTableView(view string, cols []table.Column, statusCol, keyCol int, rowStyle rowStyleFunc) string {
-	start, ok := cellStart(cols, statusCol)
-	if !ok {
+	return styleTableCells(view, cols, keyCol, rowStyle, map[int]cellStyler{statusCol: styleStatusCell})
+}
+
+// cellStyler renders one cell (its full padded text) on top of the row's base
+// style. ok is false when the cell needs nothing beyond the base.
+type cellStyler func(base lipgloss.Style, cell string) (out string, ok bool)
+
+// styleStatusCell reddens an alarming status word, leaving its padding in the
+// base style.
+func styleStatusCell(base lipgloss.Style, cell string) (string, bool) {
+	word := strings.TrimSpace(cell)
+	if !alarming(model.Status(word)) {
+		return "", false
+	}
+	at := strings.Index(cell, word)
+	return renderSpan(base, cell[:at]) + renderSpan(base.Foreground(failedColor), word) +
+		renderSpan(base, cell[at+len(word):]), true
+}
+
+// Colors of a terraform result cell: terraform's own plan colors for the
+// counts, red for a failure, yellow for a run still going, and dim for
+// everything that says "nothing to see" (no changes, not run, not yet read).
+var (
+	resultAddColor     = lipgloss.Color("2")
+	resultChangeColor  = lipgloss.Color("3")
+	resultDestroyColor = lipgloss.Color("1")
+	resultDimColor     = lipgloss.Color("8")
+)
+
+// styleResultCell colors a GLOBAL / ACCOUNT cell ("+0 ~1 -0", "✗ error",
+// "running", "·" …) word by word: a non-zero count takes its terraform color
+// and a zero one stays dim, so the eye lands on the rows that changed
+// something.
+func styleResultCell(base lipgloss.Style, cell string) (string, bool) {
+	if strings.TrimSpace(cell) == "" {
+		return "", false
+	}
+	var b strings.Builder
+	for len(cell) > 0 {
+		// Alternate runs of spaces (base style) and words (their own color).
+		i := strings.IndexFunc(cell, func(r rune) bool { return r != ' ' })
+		if i < 0 {
+			b.WriteString(renderSpan(base, cell))
+			break
+		}
+		if i > 0 {
+			b.WriteString(renderSpan(base, cell[:i]))
+			cell = cell[i:]
+		}
+		j := strings.IndexByte(cell, ' ')
+		if j < 0 {
+			j = len(cell)
+		}
+		word := cell[:j]
+		b.WriteString(renderSpan(base.Foreground(resultWordColor(word)), word))
+		cell = cell[j:]
+	}
+	return b.String(), true
+}
+
+// resultWordColor picks the color of one word of a result cell.
+func resultWordColor(word string) lipgloss.TerminalColor {
+	switch word {
+	case "✗", "error", "failed":
+		return failedColor
+	case "running":
+		return resultChangeColor
+	}
+	if len(word) > 1 && strings.Trim(word[1:], "0123456789") == "" {
+		if word[1:] == strings.Repeat("0", len(word)-1) {
+			return resultDimColor
+		}
+		switch word[0] {
+		case '+':
+			return resultAddColor
+		case '~':
+			return resultChangeColor
+		case '-':
+			return resultDestroyColor
+		}
+	}
+	return resultDimColor
+}
+
+// styleTableCells is styleTableView generalized to any set of columns: each
+// styled column's cell is cut out by display width and rendered by its
+// styler, and everything between them in the row's base style. A row too
+// short to reach a column (or with a wide rune straddling its edge) keeps
+// whatever was styled before that point and the rest in the base style.
+func styleTableCells(view string, cols []table.Column, keyCol int, rowStyle rowStyleFunc,
+	stylers map[int]cellStyler) string {
+	type span struct {
+		start, width int
+		style        cellStyler
+	}
+	var spans []span
+	for i := range cols {
+		st, ok := stylers[i]
+		if !ok {
+			continue
+		}
+		if start, ok := cellStart(cols, i); ok {
+			spans = append(spans, span{start, cols[i].Width, st})
+		}
+	}
+	if len(spans) == 0 {
 		return view
 	}
-	width := cols[statusCol].Width
 
 	lines := strings.Split(view, "\n")
 	for i, ln := range lines {
@@ -135,23 +238,43 @@ func styleTableView(view string, cols []table.Column, statusCol, keyCol int, row
 			}
 		}
 
-		head, rest, okHead := cutAtWidth(ln, start)
-		cell, tail, okCell := "", "", false
-		if okHead {
-			cell, tail, okCell = cutAtWidth(rest, width)
+		var b strings.Builder
+		styled := false
+		rest, pos, pending := ln, 0, ""
+		for _, sp := range spans {
+			head, after, ok := cutAtWidth(rest, sp.start-pos)
+			if !ok {
+				break
+			}
+			cell, tail, ok := cutAtWidth(after, sp.width)
+			if !ok {
+				break
+			}
+			out, ok := sp.style(base, cell)
+			if !ok {
+				// Nothing to accent: the cell joins the plain run.
+				pending += head + cell
+			} else {
+				pending += head
+				if pending != "" {
+					b.WriteString(renderSpan(base, pending))
+				}
+				b.WriteString(out)
+				pending = ""
+				styled = true
+			}
+			rest, pos = tail, sp.start+sp.width
 		}
-		word := strings.TrimSpace(cell)
-		if !okCell || !alarming(model.Status(word)) {
+		if !styled {
 			if hasBase {
 				lines[i] = renderSpan(base, ln)
 			}
 			continue
 		}
-
-		accent := base.Foreground(failedColor)
-		at := strings.Index(cell, word)
-		lines[i] = renderSpan(base, head+cell[:at]) + renderSpan(accent, word) +
-			renderSpan(base, cell[at+len(word):]+tail)
+		if pending += rest; pending != "" {
+			b.WriteString(renderSpan(base, pending))
+		}
+		lines[i] = b.String()
 	}
 	return strings.Join(lines, "\n")
 }

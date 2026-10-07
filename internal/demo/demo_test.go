@@ -15,6 +15,7 @@ import (
 	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/model"
 	"github.com/hacker65536/aft-ops/internal/core/pipeline"
+	"github.com/hacker65536/aft-ops/internal/core/result"
 )
 
 // The fakes exist to be plugged into the core services, so the compiler
@@ -203,11 +204,73 @@ func TestLogsRoundTrip(t *testing.T) {
 			"CodeBuild preamble should be stripped and something should remain",
 			len(tf), len(bl.Lines))
 	}
-	if v := logs.Verdict(bl.Lines); !strings.HasPrefix(v, "Error:") {
-		t.Errorf("verdict of a failed build = %q, want an Error: line", v)
+	if v := logs.ParseVerdict(bl.Lines); v.Kind != model.ResultError || !strings.HasPrefix(v.Line, "Error:") {
+		t.Errorf("verdict of a failed build = %+v, want an Error: line", v)
 	}
 	if n := len(logs.Summarize(bl.Lines)); n == 0 {
 		t.Error("summary of a failed build is empty")
+	}
+}
+
+// TestResultsAcrossFixture runs the list's terraform-result read over every
+// pipeline of the fixture, through the real result service: each finished
+// layer must reach a conclusion from the tail of its log alone, and the tail
+// must conclude what the whole log does.
+func TestResultsAcrossFixture(t *testing.T) {
+	env := load(t)
+	env.fx.Latency = 0 // every call of every pipeline: the recording pace is not under test
+	ctx := context.Background()
+	ps := svc(t, env)
+	ls := &logs.Service{CodeBuild: env.CodeBuildAPI(), Logs: env.LogsAPI()}
+	rs := &result.Service{Actions: ps, Logs: ls, Cache: cache.New(t.TempDir(), "demo", "test")}
+
+	names, _, err := ps.Inventory(ctx, false)
+	if err != nil {
+		t.Fatalf("Inventory: %v", err)
+	}
+	sums, _ := ps.Statuses(ctx, names, nil, pipeline.StatusOptions{}, nil)
+	read := 0
+	for _, sum := range sums {
+		if sum.Latest == nil {
+			continue
+		}
+		got, err := rs.ForExecution(ctx, sum.PipelineName, *sum.Latest)
+		if err != nil {
+			t.Errorf("%s: %v", sum.PipelineName, err)
+			continue
+		}
+		read++
+		acts, err := ps.ActionExecutions(ctx, sum.PipelineName, sum.Latest.ID, sum.Latest.Status.Terminal())
+		if err != nil {
+			t.Fatalf("ActionExecutions: %v", err)
+		}
+		for _, layer := range []model.Layer{model.LayerGlobal, model.LayerAccount} {
+			r := got.Global
+			if layer == model.LayerAccount {
+				r = got.Account
+			}
+			a := model.LayerAction(acts, layer)
+			switch {
+			case r == nil:
+				t.Errorf("%s %s: no result", sum.PipelineName, layer)
+			case a == nil || !a.Status.Terminal():
+				continue
+			case r.Kind == model.ResultUnknown:
+				t.Errorf("%s %s: the tail of a finished build reached no conclusion", sum.PipelineName, layer)
+			default:
+				bl, err := ls.Fetch(ctx, a.CodeBuildID)
+				if err != nil {
+					t.Fatalf("Fetch: %v", err)
+				}
+				if full := logs.ParseVerdict(bl.Lines); full.Line != r.Line {
+					t.Errorf("%s %s: tail concluded %q, the whole log %q",
+						sum.PipelineName, layer, r.Line, full.Line)
+				}
+			}
+		}
+	}
+	if read == 0 {
+		t.Fatal("no pipeline had a latest execution to read")
 	}
 }
 

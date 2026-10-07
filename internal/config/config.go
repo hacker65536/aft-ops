@@ -131,6 +131,12 @@ type Cache struct {
 	// forces one. AFT pipelines are mostly idle, so a generous TTL saves
 	// round-trips without staleness in practice. 0 disables the memo.
 	ExecutionsTTL Duration `yaml:"executions_ttl"`
+	// ResultsMaxAge bounds how long the on-disk terraform results (per build
+	// and per terminal execution) are kept. They never go stale — a finished
+	// build's log is immutable — so this is housekeeping, not freshness:
+	// without it the file grows by every execution ever looked at. 0 keeps
+	// everything.
+	ResultsMaxAge Duration `yaml:"results_max_age"`
 }
 
 type Release struct {
@@ -204,6 +210,7 @@ func Default() Config {
 			StatusTTL:     Duration(10 * time.Minute),
 			TriggerTTL:    Duration(time.Hour),
 			ExecutionsTTL: Duration(15 * time.Minute),
+			ResultsMaxAge: Duration(30 * 24 * time.Hour),
 		},
 		Release: Release{
 			MaxTargets:     50,

@@ -25,6 +25,7 @@ import (
 	"github.com/hacker65536/aft-ops/internal/core/account"
 	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/pipeline"
+	"github.com/hacker65536/aft-ops/internal/core/result"
 	"github.com/hacker65536/aft-ops/internal/demo"
 	"github.com/hacker65536/aft-ops/internal/metrics"
 	"github.com/hacker65536/aft-ops/internal/output"
@@ -54,6 +55,7 @@ type App struct {
 	writeCfg  *aws.Config
 	logsSvc   *logs.Service
 	pipeSvc   *pipeline.Service
+	resultSvc *result.Service
 	limits    *awsx.Limits
 	accountID string // resolved caller identity (see Identity)
 }
@@ -454,6 +456,33 @@ func (a *App) LogsService(ctx context.Context) (*logs.Service, error) {
 		Logs:      cloudwatchlogs.NewFromConfig(cfg),
 	}
 	return a.logsSvc, nil
+}
+
+// ResultService builds the terraform-results service (lazy, cached — the
+// instance holds the loaded results cache). It reads through the same
+// pipeline and logs services as everything else, so their session memos are
+// shared: a log the results read in full is the one the log screen shows.
+func (a *App) ResultService(ctx context.Context) (*result.Service, error) {
+	psvc, err := a.PipelineService(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lsvc, err := a.LogsService(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.resultSvc == nil {
+		a.resultSvc = &result.Service{
+			Actions: psvc,
+			Logs:    lsvc,
+			Cache:   a.CacheStore(),
+			Batch:   a.BatchConfig(),
+			MaxAge:  a.Cfg.Cache.ResultsMaxAge.D(),
+		}
+	}
+	return a.resultSvc, nil
 }
 
 // StartClient builds the write-side CodePipeline client.

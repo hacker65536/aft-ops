@@ -325,6 +325,12 @@ type PipelineSummary struct {
 	// opposed to Latest.LastUpdate, the execution's own time). It surfaces
 	// staleness when the status is served from cache.
 	StatusFetchedAt *time.Time `json:"status_fetched_at,omitempty"`
+	// Results is the latest execution's terraform outcome per layer. Only
+	// set when asked for (`pipeline list --results`): reading it costs log
+	// fetches the plain list does not make (docs/design.md §4.6).
+	Results *ExecutionResults `json:"results,omitempty"`
+	// ResultsError is why Results could not be read, never silent.
+	ResultsError string `json:"results_error,omitempty"`
 }
 
 // Status returns the latest execution status (StatusUnknown when absent).

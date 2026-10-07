@@ -29,6 +29,8 @@ type execsModel struct {
 	load    ExecutionsFunc
 	actions ActionsFunc
 	logs    LogsFunc
+	// results is handed on to the actions screen (its verdict line).
+	results BuildResultsFunc
 	name    string // pipeline name
 	acct    string // account display name
 
@@ -199,6 +201,7 @@ func (m execsModel) openActions() tea.Cmd {
 		return nil
 	}
 	am := newActionsModel(m.ctx, m.actions, m.logs, m.name, m.acct, *e, m.width, m.height)
+	am.results = m.results
 	return func() tea.Msg { return pushMsg{s: am} }
 }
 

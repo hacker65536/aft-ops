@@ -124,8 +124,23 @@ func styleStatus(s model.Status, color bool) string {
 
 // PipelineTable renders `pipeline list` rows.
 func PipelineTable(w io.Writer, items []model.PipelineSummary, color bool) {
+	pipelineTable(w, items, color, false)
+}
+
+// PipelineResultsTable renders `pipeline list --results` rows: the plain
+// list plus the latest execution's terraform result per layer
+// (docs/design.md §4.6).
+func PipelineResultsTable(w io.Writer, items []model.PipelineSummary, color bool) {
+	pipelineTable(w, items, color, true)
+}
+
+func pipelineTable(w io.Writer, items []model.PipelineSummary, color, results bool) {
 	var tw tableWriter
-	tw.row("ACCOUNT NAME", "ACCOUNT ID", "STATUS", "LAST UPDATE", "EXECUTION")
+	if results {
+		tw.row("ACCOUNT NAME", "ACCOUNT ID", "STATUS", "GLOBAL", "ACCOUNT", "LAST UPDATE", "EXECUTION")
+	} else {
+		tw.row("ACCOUNT NAME", "ACCOUNT ID", "STATUS", "LAST UPDATE", "EXECUTION")
+	}
 	for _, p := range items {
 		last, exec := "-", "-"
 		if p.Latest != nil {
@@ -145,9 +160,70 @@ func PipelineTable(w io.Writer, items []model.PipelineSummary, color bool) {
 		if name == "" {
 			name = "-"
 		}
-		tw.row(name, p.AccountID, status, last, exec)
+		if !results {
+			tw.row(name, p.AccountID, status, last, exec)
+			continue
+		}
+		global, acct := "-", "-"
+		if p.Results != nil {
+			global = styleResult(p.Results.Global.Short(), color)
+			acct = styleResult(p.Results.Account.Short(), color)
+		}
+		tw.row(name, p.AccountID, status, global, acct, last, exec)
 	}
 	tw.flush(w)
+}
+
+// styleResult colors a terraform result cell word by word, as the TUI does:
+// non-zero counts in terraform's plan colors, failures red, a running build
+// yellow, and everything that means "nothing to see" dim.
+func styleResult(s string, color bool) string {
+	if !color {
+		return s
+	}
+	words := strings.Split(s, " ")
+	for i, w := range words {
+		words[i] = resultWordStyle(w).Render(w)
+	}
+	return strings.Join(words, " ")
+}
+
+func resultWordStyle(w string) lipgloss.Style {
+	switch w {
+	case "✗", "error", "failed":
+		return styleFailed
+	case "running":
+		return styleInFlight
+	}
+	if len(w) > 1 && strings.Trim(w[1:], "0123456789") == "" && strings.Trim(w[1:], "0") != "" {
+		switch w[0] {
+		case '+':
+			return styleSucceeded
+		case '~':
+			return styleInFlight
+		case '-':
+			return styleFailed
+		}
+	}
+	return styleDim
+}
+
+// ResultsNote reports on stderr how many rows' terraform results could not
+// be read (shown as "?" in the table), with the first reason. Silent when
+// every row was read.
+func ResultsNote(w io.Writer, items []model.PipelineSummary) {
+	n, first := 0, ""
+	for _, p := range items {
+		if p.ResultsError != "" {
+			if n == 0 {
+				first = p.ResultsError
+			}
+			n++
+		}
+	}
+	if n > 0 {
+		fmt.Fprintf(w, "results: %d unreadable (first: %s)\n", n, truncate(first, 120))
+	}
 }
 
 // PipelineCounts prints the per-status tally (stderr companion of the table).

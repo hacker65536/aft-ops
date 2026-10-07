@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/hacker65536/aft-ops/internal/core/logs"
 	"github.com/hacker65536/aft-ops/internal/core/model"
 )
 
@@ -63,12 +62,11 @@ type actionsLoadedMsg struct {
 	err     error
 }
 
-// verdictsMsg carries the lazily-fetched terraform verdict lines
-// ("Apply complete! ..." / "Error: ...") keyed by build id. Builds whose
-// fetch failed, or that ran no terraform, are simply absent and keep the
-// API's own summary.
+// verdictsMsg carries the lazily-fetched terraform results keyed by build
+// id. Builds whose fetch failed, or that ran no terraform, carry no verdict
+// line and keep the API's own summary.
 type verdictsMsg struct {
-	verdicts map[string]string
+	verdicts map[string]model.TerraformResult
 }
 
 // actionsModel is the action list screen: the per-action runs of one
@@ -80,19 +78,23 @@ type actionsModel struct {
 	ctx  context.Context
 	load ActionsFunc
 	logs LogsFunc
-	name string // pipeline name
-	acct string // account display name
-	exec model.Execution
+	// results reads the terraform result of each build (wired to
+	// result.Service.ForActions — the same path the list's result columns
+	// take). nil disables the verdict fetch.
+	results BuildResultsFunc
+	name    string // pipeline name
+	acct    string // account display name
+	exec    model.Execution
 
 	table   table.Model
 	spin    spinner.Model
 	loading bool
 	err     error
 	actions []model.ActionExecution
-	// verdicts maps a build id to its terraform verdict line, lazily
-	// fetched from the build log after the action list loads (which also
-	// pre-warms the log memo, so opening the log screen is instant).
-	verdicts map[string]string
+	// verdicts maps a build id to its terraform result, lazily fetched
+	// after the action list loads. A result the list already read is served
+	// from the shared results cache without a request.
+	verdicts map[string]model.TerraformResult
 	// cursor tracks what the cursor row's highlight currently conveys (see
 	// syncCursorTint).
 	cursor cursorTint
@@ -174,7 +176,7 @@ func (m actionsModel) Update(msg tea.Msg) (screen, tea.Cmd) {
 	case verdictsMsg:
 		if len(msg.verdicts) > 0 {
 			if m.verdicts == nil {
-				m.verdicts = map[string]string{}
+				m.verdicts = map[string]model.TerraformResult{}
 			}
 			for id, v := range msg.verdicts {
 				m.verdicts[id] = v
@@ -223,43 +225,28 @@ func (m *actionsModel) syncCursor() {
 	m.cursor = syncCursorTint(&m.table, want, m.cursor)
 }
 
-// verdictCmd fetches each terminal CodeBuild action's log in the background
-// and extracts its terraform verdict line. Fetch errors are swallowed (the
-// summary just stays as the API's) and completed builds land in the log memo,
-// so this doubles as a prefetch for the log screen.
-//
-// The builds are walked one at a time on purpose: fanning them out would put
-// concurrent log requests outside the batch engine's rate control, which is
-// the one place this tool is supposed to decide how hard it hits the API.
-// An execution has a handful of actions, so serial costs a moment at most.
+// verdictCmd reads the terraform result of each terminal CodeBuild action
+// in the background. It goes through the same core path as the list's
+// result columns (result.Service.ForActions): served from the results cache
+// when the list — or an earlier visit — already read it, and otherwise from
+// the tail of the build log, under the run's shared API rate limit. Fetch
+// errors are swallowed here: the summary just stays as the API's.
 func (m actionsModel) verdictCmd() tea.Cmd {
-	if m.logs == nil {
+	if m.results == nil {
 		return nil
 	}
-	var ids []string
+	var builds []model.ActionExecution
 	for _, a := range m.actions {
 		if a.CodeBuildID != "" && a.Status.Terminal() {
-			ids = append(ids, a.CodeBuildID)
+			builds = append(builds, a)
 		}
 	}
-	if len(ids) == 0 {
+	if len(builds) == 0 {
 		return nil
 	}
-	ctx, load := m.ctx, m.logs
+	ctx, read := m.ctx, m.results
 	return func() tea.Msg {
-		out := make(map[string]string, len(ids))
-		for _, id := range ids {
-			if ctx.Err() != nil {
-				break
-			}
-			lines, err := load(ctx, id)
-			if err != nil {
-				continue
-			}
-			if v := logs.Verdict(lines); v != "" {
-				out[id] = v
-			}
-		}
+		out, _ := read(ctx, builds)
 		return verdictsMsg{verdicts: out}
 	}
 }
@@ -312,7 +299,7 @@ func (m actionsModel) detailLines() (summary, errMsg string) {
 		return "", ""
 	}
 	summary = a.Summary
-	if v := m.verdicts[a.CodeBuildID]; v != "" {
+	if v := m.verdicts[a.CodeBuildID].Line; v != "" {
 		summary = v
 	}
 	return clipToWidth(summary, m.width), clipToWidth(a.ErrorMessage, m.width)

@@ -68,6 +68,9 @@ go build -o aft-ops ./cmd/aft-ops
 # failed ones only, as JSON (stable schema for automation / AI agents)
 ./aft-ops pipeline list --status Failed -o json
 
+# add the latest terraform result of each layer (GLOBAL / ACCOUNT columns)
+./aft-ops pipeline list --results
+
 # keep watching while something is running
 ./aft-ops pipeline list --watch --interval 30s
 
@@ -113,8 +116,13 @@ Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
 - Log view renders the terraform portion by default (`m` cycles
   terraform / raw / summary) and supports less-style search: `/` to search,
   `n`/`N` for next/previous match
+- The list shows each pipeline's latest terraform result per layer in the
+  GLOBAL / ACCOUNT columns — `+1 ~0 -2` (add / change / destroy), `·` no
+  changes, `✗ error`, `running`, `—` not run — filled in row by row after the
+  list appears (failed rows first). A finished execution's results are stored,
+  so the next start reads only what ran since
 - Actions show each action's terraform verdict (`Apply complete! ...` /
-  `Error: ...`) fetched lazily from its build log, with plan-colored counts
+  `Error: ...`) from the same results, with plan-colored counts
 - `space` multi-select + `x` triggers batch Release change (guarded by
   `release.max_targets`); the confirm screen re-checks the targets' current
   status before you commit
@@ -168,6 +176,7 @@ cache:
   status_ttl: 10m        # latest-status cache; 0 = always fan out
   trigger_ttl: 1h        # pipeline-trigger cache; 0 = always fan out
   executions_ttl: 15m    # in-session execution-history memo
+  results_max_age: 720h  # keep stored terraform results this long; 0 = forever
 
 release:
   max_targets: 50

@@ -381,6 +381,7 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		sortOrder    string
 		watch        bool
 		interval     time.Duration
+		results      bool
 	)
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -407,6 +408,12 @@ func newPipelineListCmd(app *App) *cobra.Command {
 					return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
 				}
 				summaries = filterSummaries(summaries, statuses, accountQuery)
+				if results {
+					// After the filter: only the rows shown are worth reading.
+					if err := readResults(cmd.Context(), app, summaries); err != nil {
+						return &ExitError{Code: ExitToolError, Err: err, Message: err.Error()}
+					}
+				}
 				model.SortSummaries(summaries, key, order)
 
 				if app.Format == output.FormatJSON {
@@ -414,9 +421,16 @@ func newPipelineListCmd(app *App) *cobra.Command {
 						return err
 					}
 				} else {
-					output.PipelineTable(os.Stdout, summaries, app.Color())
+					if results {
+						output.PipelineResultsTable(os.Stdout, summaries, app.Color())
+					} else {
+						output.PipelineTable(os.Stdout, summaries, app.Color())
+					}
 					output.PipelineCounts(os.Stderr, summaries)
 					output.Freshness(os.Stderr, "statuses", stats)
+					if results {
+						output.ResultsNote(os.Stderr, summaries)
+					}
 				}
 
 				if failOnError {
@@ -449,7 +463,49 @@ func newPipelineListCmd(app *App) *cobra.Command {
 		"redraw the list on an interval until interrupted (table output only)")
 	cmd.Flags().DurationVar(&interval, "interval", 0,
 		"refresh interval for --watch (default: tui.poll_interval, 30s)")
+	cmd.Flags().BoolVar(&results, "results", false,
+		"also read the latest execution's terraform result per layer (GLOBAL / ACCOUNT);\n"+
+			"reads build logs, served from cache once an execution has been read")
 	return cmd
+}
+
+// readResults fills in each summary's terraform results for its latest
+// execution, through the batch engine (the rate limit is per API call). A
+// row whose results could not be read carries ResultsError — the table shows
+// "?" and ResultsNote counts it — rather than failing the whole list.
+func readResults(ctx context.Context, app *App, summaries []model.PipelineSummary) error {
+	svc, err := app.ResultService(ctx)
+	if err != nil {
+		return err
+	}
+	var idx []int
+	for i, s := range summaries {
+		if s.Latest != nil && s.Latest.ID != "" && s.FetchError == "" {
+			idx = append(idx, i)
+		}
+	}
+	var progress func(batch.Progress)
+	if app.StderrIsTTY() {
+		progress = func(p batch.Progress) {
+			fmt.Fprintf(os.Stderr, "\rreading results %d/%d (failed: %d)", p.Done, p.Total, p.Failed)
+		}
+	}
+	res := batch.Run(ctx, app.BatchConfig(), idx,
+		func(ctx context.Context, i int) (model.ExecutionResults, error) {
+			return svc.ForExecution(ctx, summaries[i].PipelineName, *summaries[i].Latest)
+		}, progress)
+	clearProgress(app)
+	for k, r := range res {
+		s := &summaries[idx[k]]
+		v := r.Value
+		if v.Global != nil || v.Account != nil {
+			s.Results = &v
+		}
+		if r.Err != nil {
+			s.ResultsError = r.Err.Error()
+		}
+	}
+	return ctx.Err()
 }
 
 // watchLoop redraws render() every interval until the context is cancelled,

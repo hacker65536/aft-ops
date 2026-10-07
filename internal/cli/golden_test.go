@@ -109,8 +109,8 @@ func TestGolden(t *testing.T) {
 	}
 }
 
-// result is one command run's observable output.
-type result struct {
+// cliRun is one command run's observable output.
+type cliRun struct {
 	stdout string
 	stderr string
 	code   int
@@ -122,7 +122,7 @@ type result struct {
 // In-process rather than by exec: Run is the same entry point main uses, so
 // the exit codes here are the real ones, and no built binary has to exist for
 // `go test ./...` to work.
-func runCLI(t *testing.T, args ...string) result {
+func runCLI(t *testing.T, args ...string) cliRun {
 	t.Helper()
 
 	// Each run gets its own XDG root. The caches are exactly what makes two
@@ -166,7 +166,7 @@ func runCLI(t *testing.T, args ...string) result {
 
 	code := Run(context.Background())
 
-	return result{stdout: readFile(t, stdout), stderr: readFile(t, stderr), code: code}
+	return cliRun{stdout: readFile(t, stdout), stderr: readFile(t, stderr), code: code}
 }
 
 func readFile(t *testing.T, path string) string {
@@ -181,7 +181,7 @@ func readFile(t *testing.T, path string) string {
 // transcript is the recorded form: the command, its exit code, and each
 // stream labelled. Keeping all three in one file means a change to any of
 // them shows up in the same diff.
-func transcript(args []string, r result) string {
+func transcript(args []string, r cliRun) string {
 	var b strings.Builder
 	b.WriteString("$ aft-ops " + strings.Join(args, " ") + "\n")
 	b.WriteString("exit " + strconv.Itoa(r.code) + "\n")

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -120,24 +119,33 @@ func TestActionsBackPops(t *testing.T) {
 // terminal CodeBuild action, and the resulting verdictsMsg replaces the
 // selected action's summary line.
 func TestActionsVerdictFlow(t *testing.T) {
-	logsFn := func(context.Context, string) ([]string, error) {
-		return []string{"Apply complete! Resources: 0 added, 0 changed, 0 destroyed."}, nil
+	var asked []string
+	results := func(_ context.Context, acts []model.ActionExecution) (map[string]model.TerraformResult, error) {
+		out := map[string]model.TerraformResult{}
+		for _, a := range acts {
+			asked = append(asked, a.CodeBuildID)
+			out[a.CodeBuildID] = model.TerraformResult{Kind: model.ResultNoChanges,
+				Line: "Apply complete! Resources: 0 added, 0 changed, 0 destroyed."}
+		}
+		return out, nil
 	}
-	m := newActionsModel(context.Background(), nil, logsFn,
+	m := newActionsModel(context.Background(), nil, nil,
 		"111111111111-customizations-pipeline", "alpha",
 		model.Execution{ID: "aaaa1111-2222", Status: model.StatusSucceeded}, 80, 24)
+	m.results = results
 
 	next, cmd := m.Update(actionsLoadedMsg{actions: testActions()})
 	m = next.(actionsModel)
 	if cmd == nil {
-		t.Fatal("loaded actions with a LogsFunc should trigger a verdict fetch")
+		t.Fatal("loaded actions with a BuildResultsFunc should trigger a verdict fetch")
 	}
 	vm, ok := cmd().(verdictsMsg)
 	if !ok {
 		t.Fatalf("verdict fetch should emit verdictsMsg, got %T", cmd())
 	}
-	if !strings.HasPrefix(vm.verdicts["proj:uuid"], "Apply complete!") {
-		t.Fatalf("verdictsMsg = %+v", vm)
+	// Only the action that carries a build is asked about.
+	if len(asked) != 1 || asked[0] != "proj:uuid" {
+		t.Fatalf("asked for builds %v, want [proj:uuid]", asked)
 	}
 
 	next, _ = m.Update(vm)
@@ -152,6 +160,20 @@ func TestActionsVerdictFlow(t *testing.T) {
 	m.table.SetCursor(0)
 	if summary, _ := m.detailLines(); summary != "" {
 		t.Errorf("source summary = %q, want empty", summary)
+	}
+}
+
+// A build with no verdict line (it failed outside terraform) keeps the API's
+// own summary rather than going blank.
+func TestActionsVerdictWithoutLineKeepsSummary(t *testing.T) {
+	m := loadedActionsModel(t, nil)
+	next, _ := m.Update(verdictsMsg{verdicts: map[string]model.TerraformResult{
+		"proj:uuid": {Kind: model.ResultFailed},
+	}})
+	m = next.(actionsModel)
+	m.table.SetCursor(1)
+	if summary, _ := m.detailLines(); summary != "build failed" {
+		t.Errorf("summary = %q, want the API summary", summary)
 	}
 }
 

@@ -133,6 +133,44 @@ func runTUI(ctx context.Context, app *App) error {
 		return bl.Lines, nil
 	}
 
+	// results reads each row's latest-execution terraform results for the
+	// list's GLOBAL / ACCOUNT columns, row by row through the batch engine.
+	// The rate limit is per API call (shared with the status poll), and rows
+	// whose execution was read before cost nothing (docs/design.md §4.6).
+	results := func(ctx context.Context, items []model.PipelineSummary,
+		onResult func(string, model.ExecutionResults, error)) {
+		svc, err := app.ResultService(ctx)
+		if err != nil {
+			for _, it := range items {
+				onResult(it.PipelineName, model.ExecutionResults{ExecutionID: it.Latest.ID}, err)
+			}
+			return
+		}
+		batch.Each(ctx, app.BatchConfig(), items,
+			func(ctx context.Context, it model.PipelineSummary) (model.ExecutionResults, error) {
+				return svc.ForExecution(ctx, it.PipelineName, *it.Latest)
+			},
+			func(r batch.Result[model.ExecutionResults]) {
+				it := items[r.Index]
+				v := r.Value
+				if v.ExecutionID == "" {
+					v.ExecutionID = it.Latest.ID // cancelled before it ran
+				}
+				onResult(it.PipelineName, v, r.Err)
+			}, nil)
+	}
+
+	// buildResults reads the terraform result of an execution's builds for
+	// the actions screen — the same service, so whatever the list already
+	// read is served from it.
+	buildResults := func(ctx context.Context, acts []model.ActionExecution) (map[string]model.TerraformResult, error) {
+		svc, err := app.ResultService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return svc.ForActions(ctx, acts)
+	}
+
 	// release triggers Release change on the selected targets — the same core
 	// path and guard as `pipeline release`. In-progress skipping comes from
 	// config. Cache invalidation is best-effort (the screen refreshes the
@@ -176,6 +214,8 @@ func runTUI(ctx context.Context, app *App) error {
 		Executions:   executions,
 		Actions:      actions,
 		Logs:         logsFn,
+		Results:      results,
+		BuildResults: buildResults,
 		Release:      release,
 		ReleaseLimit: app.Cfg.Release.MaxTargets,
 		PollInterval: app.Cfg.TUI.PollInterval.D(),
