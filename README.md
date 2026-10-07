@@ -117,10 +117,11 @@ Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
   terraform / raw / summary) and supports less-style search: `/` to search,
   `n`/`N` for next/previous match
 - The list shows each pipeline's latest terraform result per layer in the
-  GLOBAL / ACCOUNT columns — `+1 ~0 -2` (add / change / destroy), `·` no
-  changes, `✗ error`, `running`, `—` not run — filled in row by row after the
-  list appears (failed rows first). A finished execution's results are stored,
-  so the next start reads only what ran since
+  GLOBAL / ACCOUNT columns (`+1 ~0 -2`, `·`, `✗ error`, … — see
+  [Terraform results](#terraform-results)), filled in row by row after the
+  list appears, failed rows first. The header tells you whether they are
+  complete: `results ⠋ 120/200` while reading, `results ✓ 200/200` once done,
+  plus `· N unreadable` for rows showing `?` (`r` on a row retries it)
 - Actions show each action's terraform verdict (`Apply complete! ...` /
   `Error: ...`) from the same results, with plan-colored counts
 - `space` multi-select + `x` triggers batch Release change (guarded by
@@ -129,8 +130,9 @@ Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
 - While any pipeline is running, the list auto-refreshes just those rows every
   `tui.poll_interval` (default 30s, `0` disables it) and stops once everything
   is terminal
-- Immutable data (completed builds' logs, finished executions' actions) is
-  cached in-session; execution history is served within
+- Immutable data is cached: terraform results on disk (see
+  [Terraform results](#terraform-results)), completed builds' logs and
+  finished executions' actions in-session; execution history is served within
   `cache.executions_ttl` (default 15m) — `r`/`R` force a refresh
 
 ## Configuration
@@ -225,6 +227,43 @@ Release operations never trust the status cache: `--status` refetches the
 whole inventory before deciding what to release, and named targets and
 `--account` groups are refetched individually, so neither the selection nor
 the in-progress skip is made on minutes-old data.
+
+## Terraform results
+
+The list's GLOBAL and ACCOUNT columns (TUI, and `pipeline list --results`)
+summarize what the latest execution's two terraform runs did — the global
+customizations apply, then the account customizations apply:
+
+| Cell | Meaning |
+|---|---|
+| `+1 ~0 -2` | applied: resources added / changed / destroyed (non-zero counts in terraform's colors) |
+| `·` | no changes (`No changes.`, or an apply of `0 / 0 / 0`) |
+| `✗ error` | terraform reported an `Error:` |
+| `✗ failed` | the action failed outside terraform (a helper script, the build container) |
+| `plan +1 ~0 -0` | only a plan was printed; the run never reached apply (e.g. it was stopped) |
+| `running` | the build — or the stage the run has not reached yet — is still going |
+| `—` | the run ended without reaching this stage (an earlier stage failed) |
+| `?` | the log could not be read, or carries no verdict |
+| `…` | not read yet |
+
+Each result comes from the tail of the build's CloudWatch log (the last 300
+lines; the whole log only when the tail has no verdict), read where CodeBuild
+puts a project's log by default — `/aws/codebuild/<project>`, stream
+`<build uuid>`, which is where AFT's projects log. Only if that log does not
+exist is the build looked up with `BatchGetBuilds`, which CodeBuild throttles
+readily when called for every pipeline. With `-o json`, each row carries
+`results.global` / `results.account` (`kind`, `add`, `change`, `destroy`,
+`line`) and, when a row could not be read, `results_error`.
+
+A finished execution's results never change, so they are stored on disk
+(`terraform-results` in `aft-ops cache status`) with no TTL — only the
+conclusion, never the log. A start whose pipelines have not run since the
+last look reads nothing; after a fleet-wide release, the first read takes
+about one CodePipeline call and two log calls per pipeline. Results still
+running, unreadable or without a verdict are not stored and are read again
+next time. `--refresh` and `R` do not re-read stored results (there is
+nothing newer to read); `aft-ops cache clear` removes them with the rest of
+the cache, and `cache.results_max_age` (default 30 days) prunes old ones.
 
 ## Triggers
 
