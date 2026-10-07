@@ -15,15 +15,16 @@ Every recording below runs against a local fixture — no AWS account, no
 credentials, no network. You can reproduce any of them with
 `aft-ops --demo docs/demo/fixture.json` (see [docs/demo](docs/demo)).
 
-**Triage from the command line** — every account pipeline at a glance, filter
-to what is broken, and get the terraform error out of a 200-line CodeBuild log
-without opening the console:
+**Triage from the command line** — every account pipeline at a glance, what
+each one's last global and account terraform apply did, filter to what is
+broken, and get the terraform error out of a 200-line CodeBuild log without
+opening the console:
 
 ![CLI demo](docs/demo/cli.gif)
 
-**Drill down in the TUI** — pipeline list → executions → actions → log, with
-each build's terraform verdict fetched lazily and the CodeBuild noise stripped
-out of the log:
+**Drill down in the TUI** — the list fills in each pipeline's terraform results
+behind its rows, then pipeline list → executions → actions → log, with the
+CodeBuild noise stripped out of the log:
 
 ![TUI demo](docs/demo/tui.gif)
 

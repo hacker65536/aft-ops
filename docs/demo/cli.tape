@@ -42,6 +42,14 @@ Hide
 Type "clear" Enter
 Show
 
+# 1b) The same list with what each run's terraform did — the global and the
+#     account customizations apply, read from the tail of each build log.
+Type "aft-ops pipeline list --results" Sleep 400ms Enter
+Sleep 7s
+Hide
+Type "clear" Enter
+Show
+
 # 2) Triage: just what is broken. The status cache is bypassed for the
 #    selection, so this is current state, not a minutes-old note.
 Type "aft-ops pipeline list --status Failed" Sleep 400ms Enter

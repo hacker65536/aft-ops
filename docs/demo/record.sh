@@ -69,6 +69,8 @@ region: ap-northeast-1
 batch:
   concurrency: 12
   rps: 30
+  service_rps:
+    logs: 60
 
 cache:
   status_ttl: 10m

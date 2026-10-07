@@ -20,8 +20,8 @@ one fixture can be paced differently per recording.
 | File | Role |
 | --- | --- |
 | `fixture.json` | The fake data. Hand-authored; contains no real account, name, or log |
-| `cli.tape` → `cli.gif` | CLI triage: list, filter, JSON, show, logs, release dry-run |
-| `tui.tape` → `tui.gif` | TUI drill-down: list → executions → actions → log |
+| `cli.tape` → `cli.gif` | CLI triage: list, terraform results, filter, JSON, show, logs, release dry-run |
+| `tui.tape` → `tui.gif` | TUI drill-down: list (with its terraform result columns) → executions → actions → log |
 | `tui-release.tape` → `tui-release.gif` | Multi-select Release change, watched to completion |
 | `watch.tape` → `watch.gif` | `pipeline list --watch` |
 | `record.sh` | The driver: builds a throwaway binary, isolates the environment, runs `vhs` |

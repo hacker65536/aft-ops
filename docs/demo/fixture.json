@@ -1643,7 +1643,7 @@
               "starts_after": "2m27s",
               "takes": "3m58s",
               "build_id": "aft-account-customizations:2a010af8-0215-4021-9008-08fb16205408",
-              "log": "running-partial"
+              "log": "apply-changes"
             }
           ]
         },

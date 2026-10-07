@@ -24,9 +24,11 @@ Type `export PROMPT_COMMAND=` Enter
 Type "clear" Enter
 Show
 
-# Bare `aft-ops` launches the TUI.
+# Bare `aft-ops` launches the TUI. The rows come first; the GLOBAL and
+# ACCOUNT columns (what each run's terraform did) fill in behind them, and
+# the header turns from a spinner to "results ✓" once they are complete.
 Type "aft-ops" Sleep 400ms Enter
-Sleep 5s
+Sleep 6s
 
 # f cycles the status filter: all -> Failed. Four rows want attention.
 Type "f"
