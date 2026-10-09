@@ -170,6 +170,10 @@ type Trigger struct {
 	// most 8 patterns each, at most 255 characters per pattern.
 	FilePathIncludes []string `yaml:"file_path_includes"`
 	FilePathExcludes []string `yaml:"file_path_excludes"`
+	// MaxTargets caps how many pipelines one `pipeline triggers fix` run may
+	// write without an explicit --max-targets, as release.max_targets does
+	// for releases.
+	MaxTargets int `yaml:"max_targets"`
 }
 
 // CodePipeline's quotas for one push filter's file-path patterns.
@@ -221,6 +225,7 @@ func Default() Config {
 			Branch:           "main",
 			FilePathIncludes: []string{"{customizations_name}/**"},
 			FilePathExcludes: []string{"**/*.md", "**/.terraform-docs.yml"},
+			MaxTargets:       50,
 		},
 		TUI:     TUI{PollInterval: Duration(30 * time.Second)},
 		Metrics: Metrics{Enabled: true, Dir: DefaultMetricsDir(), KeepRuns: 100},

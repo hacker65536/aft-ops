@@ -501,6 +501,24 @@ func (a *App) StartClient(ctx context.Context) (pipeline.StartAPI, error) {
 	return codepipeline.NewFromConfig(cfg), nil
 }
 
+// UpdateClient builds the write-side CodePipeline client for trigger fixes.
+// It resolves through the same write profile and account check as
+// StartClient.
+func (a *App) UpdateClient(ctx context.Context) (pipeline.UpdateAPI, error) {
+	if a.Demo != nil {
+		a.announceDemoTarget()
+		a.mu.Lock()
+		a.demoLimitsLocked()
+		a.mu.Unlock()
+		return a.Demo.UpdateAPI(), nil
+	}
+	cfg, err := a.WriteAWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return codepipeline.NewFromConfig(cfg), nil
+}
+
 // AccountSource builds the configured account source.
 func (a *App) AccountSource(ctx context.Context) (account.Source, error) {
 	if a.Demo != nil {

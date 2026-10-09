@@ -141,7 +141,8 @@ so any trigger is out-of-band: re-running aft-create-pipeline — which an AFT
 upgrade or a rebuilt CodeConnections connection does across the fleet —
 removes it. This command is how that becomes visible.
 
-Read-only: it never writes a pipeline definition.`,
+Read-only: it never writes a pipeline definition. To put the expected
+trigger back, use "pipeline triggers fix".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -218,6 +219,7 @@ Read-only: it never writes a pipeline definition.`,
 		"filter by trigger state, comma-separated:\n"+triggerStateValues())
 	cmd.Flags().BoolVar(&failOnDrift, "fail-on-drift", false,
 		"exit 1 unless every listed pipeline carries its expected trigger")
+	cmd.AddCommand(newPipelineTriggersFixCmd(app))
 	return cmd
 }
 

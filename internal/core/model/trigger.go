@@ -287,3 +287,125 @@ func TriggerCounts(items []TriggerSummary) map[TriggerState]int {
 	}
 	return counts
 }
+
+// TriggerFixAction is what `pipeline triggers fix` will do with one pipeline,
+// decided from its trigger verdict before anything is written.
+type TriggerFixAction string
+
+const (
+	// FixUpdate means the pipeline's trigger is replaced with the expected one.
+	FixUpdate TriggerFixAction = "update"
+	// FixRefuse means the pipeline is left alone and reported: its trigger
+	// differs in a way the expectation cannot describe, or there is no
+	// expectation to write.
+	FixRefuse TriggerFixAction = "refuse"
+	// FixNone means there is nothing to do: the trigger is already right.
+	FixNone TriggerFixAction = "none"
+)
+
+// Refusal reasons that are not trigger differences. The rest of a refusal
+// is the ClassifyTrigger reasons that made the pipeline unfixable.
+const (
+	ReasonNoExpectation = "no_expectation"
+	ReasonFetchError    = "fetch_error"
+)
+
+// fixableReasons are the differences the expected trigger fully describes,
+// so writing it is a correction. Everything else ClassifyTrigger can report —
+// another source action's trigger, several triggers, pull-request or tag
+// filters, branch excludes, extra push filters, another provider — is a
+// trigger someone may have put there on purpose, and overwriting it with the
+// expectation would delete it without a word.
+var fixableReasons = map[string]bool{
+	ReasonNoTrigger:        true,
+	ReasonBranches:         true,
+	ReasonFilePaths:        true,
+	ReasonFilePathExcludes: true,
+}
+
+// PlanTriggerFix decides what fixing one pipeline means. For FixRefuse the
+// returned reasons say why; for the other actions they are nil.
+func PlanTriggerFix(s TriggerSummary) (TriggerFixAction, []string) {
+	switch s.State {
+	case TriggerOK:
+		return FixNone, nil
+	case TriggerUnknown:
+		return FixRefuse, []string{ReasonNoExpectation}
+	case TriggerFetchError:
+		return FixRefuse, []string{ReasonFetchError}
+	}
+	if s.Expected == nil {
+		return FixRefuse, []string{ReasonNoExpectation}
+	}
+	var refused []string
+	for _, r := range s.Reasons {
+		if !fixableReasons[r] {
+			refused = append(refused, r)
+		}
+	}
+	if len(refused) > 0 {
+		return FixRefuse, refused
+	}
+	return FixUpdate, nil
+}
+
+// SameTriggers reports whether two observed trigger lists say the same thing,
+// under the same rule ClassifyTrigger compares by: pattern order is not part
+// of what CodePipeline evaluates, and a nil list equals an empty one.
+func SameTriggers(a, b []PushTrigger) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		x, y := a[i], b[i]
+		if x.ProviderType != y.ProviderType || x.SourceAction != y.SourceAction ||
+			x.PullRequest != y.PullRequest || x.ExtraPushFilters != y.ExtraPushFilters ||
+			!sameSet(x.Branches, y.Branches) || !sameSet(x.BranchExcludes, y.BranchExcludes) ||
+			!sameSet(x.FilePaths, y.FilePaths) || !sameSet(x.FilePathExcludes, y.FilePathExcludes) ||
+			!sameSet(x.Tags, y.Tags) {
+			return false
+		}
+	}
+	return true
+}
+
+// TriggerFixOutcome is what happened to one pipeline in a fix run.
+type TriggerFixOutcome string
+
+const (
+	FixUpdated TriggerFixOutcome = "updated"
+	FixSkipped TriggerFixOutcome = "skipped"
+	FixRefused TriggerFixOutcome = "refused"
+	FixFailed  TriggerFixOutcome = "failed"
+)
+
+// Skip reasons: the pipeline was fixable at plan time but not written.
+const (
+	// SkipInProgress: UpdatePipeline stops a running execution.
+	SkipInProgress = "in_progress"
+	// SkipChangedSincePlan: the trigger read just before the write is not the
+	// one the plan showed, so writing would act on something not confirmed.
+	SkipChangedSincePlan = "changed_since_plan"
+)
+
+// TriggerFixResult is one row of a `pipeline triggers fix` run.
+type TriggerFixResult struct {
+	PipelineName string            `json:"pipeline_name"`
+	AccountID    string            `json:"account_id"`
+	AccountName  string            `json:"account_name,omitempty"`
+	Outcome      TriggerFixOutcome `json:"outcome"`
+	// Reasons explains a refusal (trigger-difference slugs) or a skip.
+	Reasons []string `json:"reasons,omitempty"`
+	// Before is the trigger the pipeline carried when it was last read.
+	Before []PushTrigger `json:"before,omitempty"`
+	// After is the trigger written; set only when Outcome is updated.
+	After *PushTrigger `json:"after,omitempty"`
+	// VersionBefore / VersionAfter are the pipeline definition versions
+	// around the write (UpdatePipeline increments it by one).
+	VersionBefore int32 `json:"version_before,omitempty"`
+	VersionAfter  int32 `json:"version_after,omitempty"`
+	// BackupPath is where the trigger declaration as it was before the write
+	// was saved.
+	BackupPath string `json:"backup_path,omitempty"`
+	Error      string `json:"error,omitempty"`
+}

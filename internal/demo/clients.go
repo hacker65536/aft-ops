@@ -209,7 +209,10 @@ func (c *PipelineClient) GetPipeline(ctx context.Context,
 	if !ok {
 		return nil, notFound(name)
 	}
-	decl := &cptypes.PipelineDeclaration{Name: aws.String(name)}
+	decl := &cptypes.PipelineDeclaration{
+		Name:    aws.String(name),
+		Version: aws.Int32(1 + e.updates[name]),
+	}
 	if t := e.fx.Pipelines[i].Trigger; t != nil {
 		provider := t.ProviderType
 		if provider == "" {
@@ -354,6 +357,67 @@ func (c *StartClient) StartPipelineExecution(ctx context.Context,
 	return &codepipeline.StartPipelineExecutionOutput{
 		PipelineExecutionId: aws.String(ex.ID),
 	}, nil
+}
+
+// UpdateAPI returns a fake implementing pipeline.UpdateAPI. A trigger fix in
+// demo mode rewrites the fixture's trigger in memory, so a following
+// `pipeline triggers` in the same session (the TUI, or --demo with a shared
+// process) sees it fixed.
+func (e *Env) UpdateAPI() *UpdateClient { return &UpdateClient{env: e} }
+
+// UpdateClient serves UpdatePipeline from the fixture.
+type UpdateClient struct{ env *Env }
+
+func (c *UpdateClient) UpdatePipeline(ctx context.Context,
+	in *codepipeline.UpdatePipelineInput,
+	_ ...func(*codepipeline.Options)) (*codepipeline.UpdatePipelineOutput, error) {
+	if err := c.env.tick(ctx, "CodePipeline"); err != nil {
+		return nil, err
+	}
+	e := c.env
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if in.Pipeline == nil {
+		return nil, fmt.Errorf("ValidationException: pipeline is required")
+	}
+	name := aws.ToString(in.Pipeline.Name)
+	i, ok := e.pipelineByName(name)
+	if !ok {
+		return nil, notFound(name)
+	}
+	// The fixture holds at most one single-filter push trigger, which is
+	// every shape the tool writes. Anything else is refused rather than
+	// half-stored.
+	var t *Trigger
+	switch n := len(in.Pipeline.Triggers); {
+	case n > 1:
+		return nil, fmt.Errorf("demo: a fixture pipeline holds at most one trigger (got %d)", n)
+	case n == 1:
+		d := in.Pipeline.Triggers[0]
+		g := d.GitConfiguration
+		if g == nil || len(g.Push) != 1 || len(g.PullRequest) > 0 {
+			return nil, fmt.Errorf("demo: only a single push filter can be stored")
+		}
+		p := g.Push[0]
+		t = &Trigger{ProviderType: string(d.ProviderType), SourceAction: aws.ToString(g.SourceActionName)}
+		if p.Branches != nil {
+			t.Branches = p.Branches.Includes
+		}
+		if p.FilePaths != nil {
+			t.FilePaths = p.FilePaths.Includes
+			t.FilePathExcludes = p.FilePaths.Excludes
+		}
+	}
+	e.fx.Pipelines[i].Trigger = t
+	if e.updates == nil {
+		e.updates = map[string]int32{}
+	}
+	e.updates[name]++
+
+	decl := *in.Pipeline
+	decl.Version = aws.Int32(1 + e.updates[name])
+	return &codepipeline.UpdatePipelineOutput{Pipeline: &decl}, nil
 }
 
 // executionActions builds the action set of a newly started run. It reuses

@@ -180,6 +180,9 @@ type Env struct {
 	// limits, when set, admits every fake API call — the demo's stand-in
 	// for the SDK middleware that rate-limits real calls (awsx.RateLimit).
 	limits Limits
+	// updates counts UpdatePipeline calls per pipeline, so the definition
+	// version GetPipeline reports moves the way the real one does.
+	updates map[string]int32
 
 	mu sync.Mutex
 }

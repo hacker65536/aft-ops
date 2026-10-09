@@ -406,6 +406,63 @@ func TriggerCounts(w io.Writer, items []model.TriggerSummary) {
 	fmt.Fprintln(w, line)
 }
 
+// TriggerFixTable renders `pipeline triggers fix` results: what happened to
+// each pipeline, and the one thing to know about it — the version the write
+// produced, why it was skipped or refused, or the error.
+func TriggerFixTable(w io.Writer, items []model.TriggerFixResult, color bool) {
+	var tw tableWriter
+	tw.row("ACCOUNT NAME", "ACCOUNT ID", "RESULT", "DETAIL")
+	for _, r := range items {
+		result := string(r.Outcome)
+		var detail string
+		switch r.Outcome {
+		case model.FixUpdated:
+			detail = fmt.Sprintf("v%d → v%d", r.VersionBefore, r.VersionAfter)
+			if color {
+				result = styleSucceeded.Render(result)
+			}
+		case model.FixSkipped:
+			detail = strings.Join(r.Reasons, ",")
+			if color {
+				result = styleDim.Render(result)
+			}
+		case model.FixRefused:
+			detail = strings.Join(r.Reasons, ",")
+			if color {
+				result = styleInFlight.Render(result)
+			}
+		default:
+			detail = truncate(r.Error, 80)
+			if color {
+				result = styleFailed.Render(result)
+			}
+		}
+		name := r.AccountName
+		if name == "" {
+			name = "-"
+		}
+		tw.row(name, r.AccountID, result, detail)
+	}
+	tw.flush(w)
+}
+
+// TriggerFixCounts prints the per-outcome tally of a fix run.
+func TriggerFixCounts(w io.Writer, items []model.TriggerFixResult) {
+	counts := map[model.TriggerFixOutcome]int{}
+	for _, r := range items {
+		counts[r.Outcome]++
+	}
+	parts := []string{fmt.Sprintf("total=%d", len(items))}
+	for _, o := range []model.TriggerFixOutcome{
+		model.FixUpdated, model.FixSkipped, model.FixRefused, model.FixFailed,
+	} {
+		if counts[o] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", o, counts[o]))
+		}
+	}
+	fmt.Fprintln(w, strings.Join(parts, " "))
+}
+
 // ReleaseTable renders release results.
 func ReleaseTable(w io.Writer, items []model.StartExecutionResult, color bool) {
 	var tw tableWriter

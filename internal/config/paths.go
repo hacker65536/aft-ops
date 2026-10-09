@@ -39,6 +39,20 @@ func DefaultMetricsDir() string {
 	return filepath.Join(home, ".local", "state", "aft-ops", "metrics")
 }
 
+// DefaultTriggerBackupDir honors XDG_STATE_HOME, defaulting to
+// ~/.local/state/aft-ops/trigger-backups. It sits next to the metrics: both
+// are records of what a run did, kept after the run, unlike the cache.
+func DefaultTriggerBackupDir() string {
+	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
+		return filepath.Join(v, "aft-ops", "trigger-backups")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "aft-ops-trigger-backups")
+	}
+	return filepath.Join(home, ".local", "state", "aft-ops", "trigger-backups")
+}
+
 // ExpandHome resolves a leading ~ to the user's home directory. Paths come
 // from a YAML file and from flags, where "~/.aws/config-sandbox" is what a
 // person naturally writes but no shell is around to expand it.
