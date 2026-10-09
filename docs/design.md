@@ -259,9 +259,10 @@ AFT には plan → 承認 → apply のゲートが無く（上流 issue #153 �
   3 並列では 0 件**だった。`batch.concurrency` は `ListPipelineExecutions` に対して調整された
   値なので、そのまま使うとこのコマンドだけが黙って壊れる。`--concurrency` を明示的に
   渡したときだけ上限を外す（操作者が意図してその数を要求している）
-- **書き込み（trigger の設定）は実装しない。** 恒久化はパイプラインの作られ方そのものを
-  変える話（AFT 本体の fork 等）であり、外から reconcile するものではない。両方持つと
-  trigger の管理主体が二重になる
+- **判定は read-only のまま。** 期待値に揃える書き込みは `pipeline triggers fix`（§4.7・F14）が
+  別コマンドとして担う。当初は「管理主体が二重になる」として書き込みを範囲外にしていたが、
+  AFT 側は trigger を宣言しておらず二重になる相手が無いこと、消失がフリート全台で起き
+  手作業でしか戻せないことから改めた（requirements F14）
 
 ### 4.5 Global 適用の収束実行（F11 + F12）
 
@@ -535,6 +536,81 @@ demo fixture（42 件）の実測: 保存なし 26 秒（単一 bucket）→ 11.
 - 結果列での filter / sort（「変更があった行だけ」等）。必要になったら第 2 段階で足す
 - 最新以外の実行の結果を一覧に出すこと
 
+### 4.7 Trigger の設定（F14）
+
+```
+対象決定（引数・--account・--file・--state。既定 --state missing,drift）
+→ 対象の trigger を強制再取得し、§4.4 と同じ期待値で判定（キャッシュは使わない）
+→ 各対象を fixable / refused / no-op に振り分け
+→ --expect による件数アサーション（fixable の件数に対して）
+→ plan 表示（パイプラインごとに現在値 → 期待値。refused は理由付きで併記）
+→ dry-run ならここで終了
+→ 書き込みクレデンシャルの解決 + アカウント検証
+→ 確認プロンプト（--yes でスキップ、件数 > limit なら拒否）
+→ Batch Engine（既定 並列度 1）で 1 本ずつ:
+     GetPipeline（直前の再取得）
+     → trigger が plan 時点から変わっていれば skip（changed_since_plan）
+     → 最新 execution が InProgress / Stopping なら skip
+     → 変更前の trigger をバックアップ
+     → 宣言の Triggers だけを期待値で置き換えて UpdatePipeline
+     → trigger キャッシュを書き込み後の値で更新
+→ 結果レポート（updated / skipped / refused / failed）
+```
+
+設計上の要点:
+
+- **語彙: CLI は `fix`、core は API 側に揃えて `UpdateTriggers`。** `apply` は AFT の文脈では
+  terraform apply と読まれるので使わない。`fix` は「F10 の判定を是正する」ことを指し、
+  `pipeline triggers`（判定）のサブコマンドとして置くことで、同じ期待値・同じ対象選択を
+  共有していることを構文に出す
+- **期待値は §4.4 と共有する。** `TriggerPolicy.Expect` と `ClassifyTrigger` をそのまま使い、
+  書き込み用の期待値を別に持たない。判定と是正の基準がずれると「fix したのに drift」になる
+- **書き換えてよいのは、期待値の形で表現できる差分だけ。** `ClassifyTrigger` の reason で振り分ける:
+
+  | reason | 扱い |
+  |---|---|
+  | `no_trigger` / `branches` / `file_paths` / `file_path_excludes` | fixable（書き換える） |
+  | `multiple_triggers` / `source_action` / `provider_type` / `pull_request_filter` / `extra_filters` | **refused**（1 つでも含めば書き込まない） |
+
+  refused になるのは、期待値に無いソースアクションの trigger（例: global-customizations 側）や
+  PR・タグのフィルタなど、誰かが意図して付けた可能性があるものである。期待値で置き換えると
+  それを黙って消すことになるので、書き込まずに理由を報告し、人が判断する。
+  refused は exit 1（ドメイン上の失敗）として扱い、無人実行でも見落とされないようにする
+- **変更は Triggers だけ。** `GetPipeline` が返した SDK の宣言（`PipelineDeclaration`）の
+  `Triggers` フィールドだけを差し替えて `UpdatePipeline` に渡す。JSON を経由した組み立て直しは
+  しない（未知のフィールドを落とす経路を作らない）。`UpdatePipeline` は定義全体の置換 API なので、
+  この read-modify-write の形が唯一の安全な書き方になる
+- **直前の再取得と、plan との突き合わせ。** 確認プロンプトを待つ間に他の運用者や
+  `aft-create-pipeline` が定義を変えることがある。書き込み直前の `GetPipeline` で得た trigger が
+  plan 時点の値と異なれば、その行は書き込まずに `changed_since_plan` として報告する。
+  確認した内容と違うものを書かない
+- **実行中は書き込まない（上書き手段なし）。** `UpdatePipeline` は実行中の execution を停止させる。
+  release の `--include-in-progress` に当たるフラグは設けない — trigger の是正は急ぐ理由がなく、
+  実行中の apply を止める代償に見合う場面が無い
+- **`UpdatePipeline` は実行を起動しない。** version が 1 上がるだけで、新しい execution は
+  作られない（実環境で確認済み）。したがって fix は apply の発火を伴わず、release とは
+  影響の種類が異なる
+- **変更前の trigger をバックアップする。** `~/.local/state/aft-ops/trigger-backups/<AFT 管理アカウント>/<実行時刻>/<pipeline>.json`
+  に、書き込み直前の trigger 宣言を **CodePipeline API と同じ JSON 形**（`get-pipeline` の
+  `.pipeline.triggers` と同じ形）で保存する。保存できなければその行は書き込まない。
+  定義全体ではなく trigger だけにしたのは、(a) fix が変えるのは trigger だけで、戻すべきものも
+  trigger だけであること、(b) SDK の型には API の JSON 形で定義全体を書き出す手段が無く、
+  自前で変換すると「戻すための定義」自体が壊れうること、による。trigger が無かった場合は
+  空配列を保存する（そのまま戻すと「trigger 無し」に戻る）。戻すときは
+  `get-pipeline` の `.pipeline.triggers` をこのファイルの `triggers` で置き換えて
+  `update-pipeline` に渡す。ツールに rollback コマンドは持たせない
+  （戻す判断は個別であり、fix の逆操作として自動化すると「何に戻すか」が曖昧になる）
+- **既定の並列度は 1。** `UpdatePipeline` の throttling 上限は未計測で、`GetPipeline` ですら
+  3 並列が上限だった（§4.4）。`--concurrency` を明示したときだけ上げる。
+  計測（§6）で上限が分かれば既定を見直す
+- **安全ガードは release と同じ構成**（§4.3）: `--dry-run` / `--yes` / `--expect N` /
+  `trigger.max_targets`（既定 50。超過は `--max-targets N` で明示）/ 書き込み先アカウントの検証を
+  確認プロンプトの前に行う
+- **権限**: `codepipeline:UpdatePipeline` と、パイプラインのサービスロールに対する
+  `iam:PassRole`（`UpdatePipeline` は `roleArn` を含む定義全体を送るため）。読み取り側は
+  §4.4 と同じ `GetPipeline` / `ListPipelineExecutions`
+- **範囲外（v1）**: TUI からの fix、rollback コマンド、期待値に無い trigger の自動削除
+
 ## 5. 逐次バッチエンジン（internal/batch）
 
 要件 F4 の中核。「チャンク逐次 × チャンク内並列」+ レート制御 + 計測。
@@ -645,6 +721,13 @@ aft-ops pipeline triggers        # F10: trigger ドリフト検出（alias: trig
     --account <name|id|部分一致>
     --state ok|missing|drift|unknown|fetch-error  # カンマ区切り。未知の値は exit 2
     --fail-on-drift              # ok 以外が 1 件でもあれば exit 1（監視ジョブ向け）
+aft-ops pipeline triggers fix [target...]  # F14: trigger を期待値に揃える（§4.7）。書き込み
+    --state missing,drift        # 既定。対象の選択（unknown / fetch-error は常に対象外）
+    --account <name|id|部分一致>
+    --file targets.txt | -
+    --expect N                   # 書き込み対象（fixable）が N 件でなければ exit 2
+    --max-targets N
+    --dry-run / --yes
 aft-ops pipeline logs <target>   # F2: CodeBuild/terraform ログ
     [--execution <id>] [--build <id>] [--raw|--summary]
     # 既定（フラグ無し）= 現在の state の失敗アクション 1 本
@@ -918,6 +1001,7 @@ trigger:               # §4.4。アカウントごとの設定は持たず meta
   file_path_excludes:
     - "**/*.md"
     - "**/.terraform-docs.yml"
+  max_targets: 50      # §4.7 `pipeline triggers fix` の上限件数。超過は --max-targets で明示
 
 tui:
   poll_interval: 30s   # TUI の in-flight 自動再取得間隔 / `pipeline list --watch` の既定間隔
@@ -1047,7 +1131,7 @@ metrics はデモ時に無効化する（フェイク呼び出しは SDK middlew
 |---|---|---|
 | 1 | リポジトリ骨格 / config / awsx / cache / account 解決 / batch（最小: 並列度+RPS+リトライ） / `pipeline list` / `pipeline release`（単発+ガード） / TUI 一覧画面 / metrics（記録のみ） | **実装済** |
 | 2 | `pipeline show` / `pipeline executions` / `pipeline refresh` / `pipeline logs`（terraform 抽出・summary） / batch 完全版（チャンク・進捗） / `pipeline release` バッチ / `pipeline triggers`（F10・§4.4） / TUI 詳細・ログ画面・multi-select / `metrics show` | **実装済** |
-| 3 | §4.6 一覧の terraform 結果列（F13）: `ParseVerdict` / `core/result` / レート制御の移設 / 一覧・Actions・CLI の共通化 ・ §4.5 収束実行（F11 + F12）: リビジョン×ステージ判定 / チャンクゲート / 完了モニタリング / 未適用コミット検出 | F13 実装済。F11 / F12 は未着手 |
+| 3 | §4.6 一覧の terraform 結果列（F13）: `ParseVerdict` / `core/result` / レート制御の移設 / 一覧・Actions・CLI の共通化 ・ §4.5 収束実行（F11 + F12）: リビジョン×ステージ判定 / チャンクゲート / 完了モニタリング / 未適用コミット検出 ・ §4.7 trigger の設定（F14）: `pipeline triggers fix` | F13 実装済。F11 / F12 / F14 は未着手 |
 | 4 | account-request（DynamoDB）/ Step Functions 状態 / 共通系パイプライン（F9） | 未着手 |
 | 5 | OSS 公開整備（英語 docs・goreleaser・Homebrew tap・LICENSE） | 一部先行済（goreleaser / homebrew_casks / LICENSE / CI は導入済。英語ドキュメントが残り） |
 

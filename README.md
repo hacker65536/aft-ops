@@ -84,6 +84,10 @@ go build -o aft-ops ./cmd/aft-ops
 ./aft-ops pipeline triggers
 ./aft-ops pipeline triggers --state missing,drift --fail-on-drift
 
+# put the expected trigger back on the pipelines that lost it (dry-run first)
+./aft-ops pipeline triggers fix --dry-run
+./aft-ops pipeline triggers fix
+
 # re-release everything that failed (dry-run first)
 ./aft-ops pipeline release --status Failed --dry-run
 ./aft-ops pipeline release --status Failed
@@ -197,6 +201,7 @@ trigger:
   file_path_excludes:
     - "**/*.md"
     - "**/.terraform-docs.yml"
+  max_targets: 50        # `pipeline triggers fix` refuses more than this without --max-targets
 
 tui:
   poll_interval: 30s     # auto-refresh of running pipelines (also --watch's default)
@@ -310,16 +315,58 @@ nothing in precision: CodePipeline evaluates each changed file on its own, so a
 commit that touches both a `.tf` file and a `README` still starts the pipeline
 while a documentation-only commit does not.
 
-This is deliberately read-only. Making the triggers permanent is a change to
-how the pipelines are built, not something to reconcile from outside; a tool
-that also wrote them would leave two things claiming to own the same
-configuration.
+### Fixing triggers
+
+`pipeline triggers fix` puts the expected trigger back, judged by the same
+expectation as the report:
+
+```bash
+./aft-ops pipeline triggers fix --dry-run       # what would change, per pipeline
+./aft-ops pipeline triggers fix                 # every missing or drifted pipeline
+./aft-ops pipeline triggers fix payments-stg    # one pipeline
+```
+
+It changes the trigger and nothing else: each pipeline's definition is read
+again immediately before the write, only its `triggers` are replaced, and the
+result is sent back with `UpdatePipeline`. Updating a pipeline does not start
+it. Before each write, the trigger as it was is saved under
+`~/.local/state/aft-ops/trigger-backups/<account>/<run>/<pipeline>.json`, in
+the same shape `get-pipeline` prints, and nothing is written if that fails.
+Undoing one change is a `get-pipeline` with its triggers swapped back:
+
+```bash
+aws codepipeline get-pipeline --name "$PIPELINE" \
+  | jq --slurpfile b "$BACKUP" '.pipeline | .triggers = $b[0].triggers' > pipeline.json
+aws codepipeline update-pipeline --pipeline file://pipeline.json
+```
+
+Some pipelines are left alone on purpose:
+
+- **A trigger the expectation cannot describe is refused, not overwritten** — a
+  trigger on another source action, more than one trigger, pull-request or tag
+  filters, branch excludes. Someone may have put it there deliberately, and
+  replacing it would delete it without a word. These are reported with the
+  reason and make the run exit 1.
+- **A running pipeline is skipped.** `UpdatePipeline` stops an in-flight
+  execution, and nothing about a trigger is urgent enough to justify that.
+- **A trigger that changed after the plan was shown is skipped.** What gets
+  written is what you confirmed.
+
+Pipelines are updated one at a time by default; `--concurrency` raises it.
+The same guards as `release` apply: `--dry-run`, `--yes`, `--expect N`, and
+`trigger.max_targets`.
+
+Re-running `aft-create-pipeline` still removes every trigger, because AFT's
+template does not declare one. Making the trigger part of that template is the
+permanent fix; until then, and whenever it is lost anyway, `triggers fix` is
+how it comes back.
 
 ## Permissions
 
 Everything runs against the AFT management account, and the split the tool
-asks for is the one worth having: browsing is read-only, and the only thing it
-ever writes is `codepipeline:StartPipelineExecution`.
+asks for is the one worth having: browsing is read-only, and the only writes
+it ever makes are `codepipeline:StartPipelineExecution` (releasing) and
+`codepipeline:UpdatePipeline` (fixing triggers).
 
 AFT's own roles are not a fit for this. The `aft-*` roles it creates are
 service roles trusted by CodePipeline, CodeBuild, Lambda and Step Functions, so
@@ -370,7 +417,29 @@ The resource pattern is deliberate: it leaves out AFT's own two pipelines
 this tool never targets anyway. No KMS grant is needed — the pipeline's
 artifact key is used by the pipeline, not by the caller starting it.
 
-Point `write_profile` at a role holding that policy and `profile` at the
+### Fixing triggers
+
+`UpdatePipeline` sends the whole pipeline definition back, role included, so
+it also needs `iam:PassRole` on the pipelines' service role:
+
+```json
+{
+  "Sid": "FixTriggersOnCustomizationsPipelines",
+  "Effect": "Allow",
+  "Action": "codepipeline:UpdatePipeline",
+  "Resource": "arn:aws:codepipeline:ap-northeast-1:123456789012:*-customizations-pipeline"
+},
+{
+  "Effect": "Allow",
+  "Action": "iam:PassRole",
+  "Resource": "arn:aws:iam::123456789012:role/aft-codepipeline-customizations-role",
+  "Condition": { "StringEquals": { "iam:PassedToService": "codepipeline.amazonaws.com" } }
+}
+```
+
+Leave these out if you only release; nothing else depends on them.
+
+Point `write_profile` at a role holding these policies and `profile` at the
 read-only one. The two must resolve to the same account; a write profile that
 lands anywhere else is refused before the confirmation prompt.
 
