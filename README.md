@@ -189,7 +189,8 @@ release:
   max_targets: 50
   skip_in_progress: true
 
-# The push trigger `pipeline triggers` expects each account pipeline to carry.
+# The push trigger every account pipeline should carry: `pipeline triggers`
+# reports against it, and `pipeline triggers fix` writes it.
 # There is no per-account entry: every pattern is expanded with that account's
 # own account_customizations_name from AFT's metadata table. At most 8 patterns
 # each, 255 characters per pattern — CodePipeline's own limits.
@@ -318,7 +319,14 @@ while a documentation-only commit does not.
 ### Fixing triggers
 
 `pipeline triggers fix` puts the expected trigger back, judged by the same
-expectation as the report:
+expectation as the report.
+
+What it writes is the `trigger:` configuration expanded for each account, so
+changing that configuration changes what the next `fix` writes. Moving the
+fleet to a new trigger shape is the same operation as repairing it: change the
+configuration, and `pipeline triggers` reports every pipeline as `drift`; run
+`fix --dry-run` to review the plan, then `fix` — with `--max-targets`, since a
+fleet-wide change exceeds `trigger.max_targets` by design.
 
 ```bash
 ./aft-ops pipeline triggers fix --dry-run       # what would change, per pipeline
