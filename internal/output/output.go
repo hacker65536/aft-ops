@@ -507,7 +507,7 @@ func ExecutionTable(w io.Writer, items []model.Execution, color bool) {
 			duration = fmtDuration(e.Elapsed(now))
 		}
 		tw.row(e.ID, styleStatus(e.Status, color), started, duration,
-			revisionSummary(e.Revisions))
+			revisionSummary(e))
 	}
 	tw.flush(w)
 }
@@ -578,7 +578,7 @@ func PipelineDetailText(w io.Writer, d model.PipelineDetail, color bool) {
 				started = humanTime(*e.StartTime)
 			}
 			htw.row(shortID(e.ID), styleStatus(e.Status, color), started,
-				revisionSummary(e.Revisions))
+				revisionSummary(e))
 		}
 		htw.flush(w)
 	}
@@ -597,11 +597,13 @@ func actionDetail(a model.ActionState) string {
 	}
 }
 
-func revisionSummary(revs []model.Revision) string {
-	if len(revs) == 0 {
+// revisionSummary is the execution's lead revision (the same one the TUI's
+// REVISION column shows), as its commit message or else its short id.
+func revisionSummary(e model.Execution) string {
+	r := e.LeadRevision()
+	if r == nil {
 		return "-"
 	}
-	r := revs[0]
 	if msg := r.Message(); msg != "" {
 		return truncate(msg, 40)
 	}

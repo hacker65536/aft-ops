@@ -108,13 +108,16 @@ func (c *PipelineClient) ListPipelineExecutions(ctx context.Context,
 			StartTime:           aws.Time(st.Start),
 			LastUpdateTime:      aws.Time(st.LastUpdate),
 		}
-		if r := ex.Revision; r.RevisionID != "" {
-			sum.SourceRevisions = []cptypes.SourceRevision{{
-				ActionName:      aws.String(r.ActionName),
-				RevisionId:      aws.String(r.RevisionID),
-				RevisionSummary: aws.String(r.Summary),
-				RevisionUrl:     aws.String(r.URL),
-			}}
+		for _, a := range ex.Actions {
+			if a.RevisionID == "" {
+				continue
+			}
+			sum.SourceRevisions = append(sum.SourceRevisions, cptypes.SourceRevision{
+				ActionName:      aws.String(a.Name),
+				RevisionId:      aws.String(a.RevisionID),
+				RevisionSummary: aws.String(a.Summary),
+				RevisionUrl:     aws.String(a.URL),
+			})
 		}
 		out.PipelineExecutionSummaries = append(out.PipelineExecutionSummaries, sum)
 	}
@@ -346,12 +349,7 @@ func (c *StartClient) StartPipelineExecution(ctx context.Context,
 		StartedAgo:  Duration(-elapsed),
 		CompletesIn: Duration(elapsed + takes),
 		CompletesAs: string(model.StatusSucceeded),
-		Revision: Revision{
-			ActionName: "aft-account-customizations",
-			RevisionID: e.nextID("c"),
-			Summary:    `{"ProviderType":"GitHub","CommitMessage":"chore: re-run customizations"}`,
-		},
-		Actions: e.executionActions(*p, takes),
+		Actions:     e.executionActions(*p, takes),
 	}
 	p.Executions = append([]Execution{ex}, p.Executions...)
 	return &codepipeline.StartPipelineExecutionOutput{

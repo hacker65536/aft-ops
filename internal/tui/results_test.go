@@ -241,3 +241,21 @@ func TestHeaderOrderPutsResultsFirst(t *testing.T) {
 		last = i
 	}
 }
+
+func TestRevCells(t *testing.T) {
+	it := model.PipelineSummary{Latest: &model.Execution{ID: "e1", Revisions: []model.Revision{
+		{ActionName: "aft-global-customizations", RevisionID: "5368c27bdeadbeef"},
+		{ActionName: "aft-account-customizations", RevisionID: "9752f0addeadbeef"},
+	}}}
+	if g, a := revCells(it); g != "5368c27b" || a != "9752f0ad" {
+		t.Errorf("revCells = %q, %q, want 5368c27b, 9752f0ad", g, a)
+	}
+
+	it.Latest.Revisions = it.Latest.Revisions[1:] // global source missing
+	if g, a := revCells(it); g != "-" || a != "9752f0ad" {
+		t.Errorf("missing global = %q, %q", g, a)
+	}
+	if g, a := revCells(model.PipelineSummary{}); g != "-" || a != "-" {
+		t.Errorf("never ran = %q, %q", g, a)
+	}
+}

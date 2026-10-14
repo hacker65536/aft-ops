@@ -160,6 +160,33 @@ func (r Revision) Message() string {
 	return UnwrapProviderSummary(r.Summary)
 }
 
+// LeadRevision is the one revision to show when there is room for only one:
+// the first by action name. The API's revision order varies between
+// executions, so taking the first as delivered would flip the column from
+// run to run. nil when the execution has none.
+func (e Execution) LeadRevision() *Revision {
+	var lead *Revision
+	for i, r := range e.Revisions {
+		if lead == nil || r.ActionName < lead.ActionName {
+			lead = &e.Revisions[i]
+		}
+	}
+	return lead
+}
+
+// LayerRevision returns the source revision the given customizations layer
+// ran from, or nil when the execution carries none for it. AFT names the
+// source actions after the repositories ("aft-global-customizations" /
+// "aft-account-customizations"), so StageLayer's suffix match applies.
+func (e Execution) LayerRevision(layer Layer) *Revision {
+	for i, r := range e.Revisions {
+		if StageLayer(r.ActionName) == layer {
+			return &e.Revisions[i]
+		}
+	}
+	return nil
+}
+
 // MarshalJSON adds the unwrapped message alongside the raw summary.
 //
 // The table and TUI renderers call Message(); without this the JSON output
@@ -360,6 +387,11 @@ const (
 	SortByLastUpdate SortKey = "last-update"
 	SortByStatus     SortKey = "status"
 	SortByAccount    SortKey = "account"
+	// SortByGlobalRev / SortByAccountRev order by the commit hash the latest
+	// execution ran from. The order of hashes means nothing; the point is to
+	// bunch the accounts that ran the same commit together.
+	SortByGlobalRev  SortKey = "global-rev"
+	SortByAccountRev SortKey = "account-rev"
 )
 
 // SortOrder is the direction of a sort.
@@ -373,12 +405,15 @@ const (
 // ParseSortKey validates a --sort value.
 func ParseSortKey(s string) (SortKey, error) {
 	switch SortKey(s) {
-	case SortByLastUpdate, SortByStatus, SortByAccount:
+	case SortByLastUpdate, SortByStatus, SortByAccount, SortByGlobalRev, SortByAccountRev:
 		return SortKey(s), nil
 	default:
-		return "", fmt.Errorf("invalid sort key %q (want last-update|status|account)", s)
+		return "", fmt.Errorf("invalid sort key %q (want %s)", s, SortKeyValues)
 	}
 }
+
+// SortKeyValues lists the accepted --sort values for help and error text.
+const SortKeyValues = "last-update|status|account|global-rev|account-rev"
 
 // ParseSortOrder validates an --order value.
 func ParseSortOrder(s string) (SortOrder, error) {
@@ -391,9 +426,10 @@ func ParseSortOrder(s string) (SortOrder, error) {
 }
 
 // SortSummaries sorts items in place by key/order. Pipelines with no last
-// execution time always sink to the bottom (regardless of order), so a
-// recency view is never headed by never-run rows. Ties break by account
-// name then id for a stable, deterministic result.
+// execution time (or, for the revision keys, no revision for that layer)
+// always sink to the bottom (regardless of order), so a view is never headed
+// by never-run rows. Ties break by account name then id for a stable,
+// deterministic result.
 func SortSummaries(items []PipelineSummary, key SortKey, order SortOrder) {
 	desc := order == OrderDesc
 	sort.SliceStable(items, func(i, j int) bool {
@@ -407,6 +443,21 @@ func SortSummaries(items []PipelineSummary, key SortKey, order SortOrder) {
 		case SortByAccount:
 			if !accountEqual(a, b) {
 				return xorDesc(accountLess(a, b), desc)
+			}
+		case SortByGlobalRev, SortByAccountRev:
+			layer := LayerGlobal
+			if key == SortByAccountRev {
+				layer = LayerAccount
+			}
+			ar, br := revisionIDOf(a, layer), revisionIDOf(b, layer)
+			if ar == "" || br == "" {
+				if ar == "" && br == "" {
+					break // fall through to account tiebreak
+				}
+				return br == "" // the row with a revision is "less" so "" sinks last
+			}
+			if ar != br {
+				return xorDesc(ar < br, desc)
 			}
 		default: // SortByLastUpdate
 			at, bt := lastUpdateOf(a), lastUpdateOf(b)
@@ -422,6 +473,18 @@ func SortSummaries(items []PipelineSummary, key SortKey, order SortOrder) {
 		}
 		return accountLess(a, b) // stable tiebreak, always ascending
 	})
+}
+
+// revisionIDOf is the commit the item's latest execution ran the layer from,
+// or "" when there is none.
+func revisionIDOf(p PipelineSummary, layer Layer) string {
+	if p.Latest == nil {
+		return ""
+	}
+	if r := p.Latest.LayerRevision(layer); r != nil {
+		return r.RevisionID
+	}
+	return ""
 }
 
 // statusRank orders statuses by how much they want an operator's attention,

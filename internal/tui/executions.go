@@ -277,21 +277,13 @@ func fmtElapsed(d time.Duration) string {
 }
 
 // revisionOf summarizes the source revision that triggered an execution:
-// the first-by-action-name revision's commit message (unwrapped from the
-// CodeConnections JSON where needed), first line only. Ordering by action
-// name keeps the column deterministic — the API's revision order varies
-// between executions.
+// the lead revision's commit message (unwrapped from the CodeConnections JSON
+// where needed), first line only.
 func revisionOf(e model.Execution) string {
-	best := -1
-	for i, r := range e.Revisions {
-		if best < 0 || r.ActionName < e.Revisions[best].ActionName {
-			best = i
-		}
-	}
-	if best < 0 {
+	r := e.LeadRevision()
+	if r == nil {
 		return "-"
 	}
-	r := e.Revisions[best]
 	if msg := r.Message(); msg != "" {
 		return strings.SplitN(msg, "\n", 2)[0]
 	}

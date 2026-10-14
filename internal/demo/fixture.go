@@ -133,17 +133,11 @@ type Execution struct {
 	// be recorded doing their actual job instead of being mimed.
 	CompletesIn Duration `json:"completes_in,omitempty"`
 	// CompletesAs is the status it lands on (default Succeeded).
-	CompletesAs string   `json:"completes_as,omitempty"`
-	Revision    Revision `json:"revision,omitempty"`
-	Actions     []Action `json:"actions"`
-}
-
-// Revision is the source revision that triggered the run.
-type Revision struct {
-	ActionName string `json:"action_name,omitempty"`
-	RevisionID string `json:"revision_id,omitempty"`
-	Summary    string `json:"summary,omitempty"`
-	URL        string `json:"url,omitempty"`
+	CompletesAs string `json:"completes_as,omitempty"`
+	// Actions include the Source stage's, whose revision_id / summary / url
+	// are also what the execution reports as its source revisions — one per
+	// repository, as CodePipeline does.
+	Actions []Action `json:"actions"`
 }
 
 // Action is one action run inside an execution.

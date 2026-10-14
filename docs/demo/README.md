@@ -21,7 +21,7 @@ one fixture can be paced differently per recording.
 | --- | --- |
 | `fixture.json` | The fake data. Hand-authored; contains no real account, name, or log |
 | `cli.tape` → `cli.gif` | CLI triage: list, terraform results, filter, JSON, show, logs, release dry-run |
-| `tui.tape` → `tui.gif` | TUI drill-down: list (with its terraform result columns) → executions → actions → log |
+| `tui.tape` → `tui.gif` | TUI drill-down: list (with its terraform result and revision columns, sort keys) → executions → actions → log |
 | `tui-release.tape` → `tui-release.gif` | Multi-select Release change, watched to completion |
 | `watch.tape` → `watch.gif` | `pipeline list --watch` |
 | `record.sh` | The driver: builds a throwaway binary, isolates the environment, runs `vhs` |
@@ -69,12 +69,12 @@ recording, and the point of the demo is to look like a live account.
       "took": "3m12s",              // terminal runs only
       "completes_in": "25s",        // in-flight runs: finish this long after load
       "completes_as": "Succeeded",  // …as this status (default Succeeded)
-      "revision": { "action_name": "…", "revision_id": "…", "summary": "…", "url": "…" },
       "actions": [ {
         "stage": "Account-Customizations", "name": "Apply", "status": "Failed",
         "starts_after": "1m15s", "takes": "1m53s",
         "build_id": "aft-account-customizations:<uuid>",  // CodeBuild actions
         "revision_id": "<sha>",                            // source actions instead
+        "url": "…",                                        // source actions: commit URL
         "summary": "…", "error": "…",
         "log": "error-iam-exists"    // key into the shared "logs" map
       } ]
@@ -88,6 +88,13 @@ Notes for anyone editing it:
 
 - `completes_in` is what makes the `--watch` and TUI-poll recordings show the
   auto-refresh doing its actual job. Without it there is nothing to wait for.
+- The Source stage's actions are also the execution's source revisions
+  (`ListPipelineExecutions`' `sourceRevisions`): one per repository, from the
+  action's `revision_id` / `summary` / `url`. The committed fixture places a
+  few commits per repository on a timeline and gives each run the newest one
+  made before it started, so recent runs share HEAD and stale accounts show an
+  older commit — which is what the list's GLB REV / ACC REV columns and their
+  sort keys are there to reveal.
 - A source action must carry `revision_id` (a bare commit SHA), never
   `build_id`. The colon in a build id is what tells the two apart downstream;
   a SHA with a colon in it would be fed to `BatchGetBuilds`.

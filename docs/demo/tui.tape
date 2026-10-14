@@ -30,6 +30,21 @@ Show
 Type "aft-ops" Sleep 400ms Enter
 Sleep 6s
 
+# s cycles the sort key; the sorted column's title is colored and carries
+# the order arrow. global-rev / account-rev bunch the accounts by the commit
+# their latest run applied — the stragglers on an older one stand out.
+Type "s"
+Sleep 700ms
+Type "s"
+Sleep 700ms
+Type "s"
+Sleep 2500ms
+Type "s"
+Sleep 2500ms
+# Back to last-update.
+Type "s"
+Sleep 1200ms
+
 # f cycles the status filter: all -> Failed. Four rows want attention.
 Type "f"
 Sleep 2500ms

@@ -126,6 +126,8 @@ var sortCycle = []model.SortKey{
 	model.SortByLastUpdate,
 	model.SortByStatus,
 	model.SortByAccount,
+	model.SortByGlobalRev,
+	model.SortByAccountRev,
 }
 
 func nextSortKey(k model.SortKey) model.SortKey {
@@ -198,22 +200,50 @@ const (
 	listKeyCol     = 1
 	listGlobalCol  = 3
 	listAccountCol = 4
+	listNameCol    = 0
+	listGlobalRev  = 5
+	listAccountRev = 6
+	listLastUpdate = 7
 )
+
+// sortCol is the column whose header marks the given sort key.
+func sortCol(k model.SortKey) int {
+	switch k {
+	case model.SortByStatus:
+		return listStatusCol
+	case model.SortByAccount:
+		return listNameCol
+	case model.SortByGlobalRev:
+		return listGlobalRev
+	case model.SortByAccountRev:
+		return listAccountRev
+	case model.SortByLastUpdate:
+		return listLastUpdate
+	}
+	return -1
+}
 
 // resultColWidth fits the widest result cell ("plan +1 ~0 -0") with room for
 // two-digit counts.
 const resultColWidth = 15
 
+// revColWidth fits a short commit hash (shortHash) and the column title with
+// the sort arrow after it. The arrows are East Asian Ambiguous width, which
+// runewidth counts as 2 under a CJK locale, hence 9 rather than 8.
+const revColWidth = 9
+
 func columns(width int) []table.Column {
 	// The table pads every column by 2 (1 each side), so leave 2 per column of
 	// slack or the last column falls off the right edge.
-	name := max(20, width-12-12-2*resultColWidth-18-12)
+	name := max(20, width-12-12-2*resultColWidth-2*revColWidth-18-16)
 	return []table.Column{
 		{Title: "ACCOUNT NAME", Width: name},
 		{Title: "ACCOUNT ID", Width: 12},
 		{Title: "STATUS", Width: 12},
 		{Title: "GLOBAL", Width: resultColWidth},
 		{Title: "ACCOUNT", Width: resultColWidth},
+		{Title: "GLB REV", Width: revColWidth},
+		{Title: "ACC REV", Width: revColWidth},
 		{Title: "LAST UPDATE", Width: 18},
 	}
 }
@@ -550,7 +580,9 @@ func (m uiModel) renderTable() string {
 			sel[it.AccountID] = true
 		}
 	}
-	return styleTableCells(m.table.View(), m.table.Columns(), listKeyCol,
+	view := markSortedHeader(m.table.View(), m.table.Columns(), sortCol(m.sortKey),
+		orderArrow(m.sortOrder))
+	return styleTableCells(view, m.table.Columns(), listKeyCol,
 		func(key string) (lipgloss.Style, bool) { return selectedRowStyle, sel[key] },
 		map[int]cellStyler{
 			listStatusCol:  styleStatusCell,
@@ -841,6 +873,22 @@ func (m uiModel) resultCells(it model.PipelineSummary) (global, account string) 
 	return e.r.Global.Short(), e.r.Account.Short()
 }
 
+// revCells renders a row's GLB REV and ACC REV cells: the short commit hash
+// each customizations repository was at when the latest execution's source
+// stage ran — what that run applied, not the repository's current HEAD.
+func revCells(it model.PipelineSummary) (global, account string) {
+	if it.Latest == nil || it.FetchError != "" {
+		return "-", "-"
+	}
+	cell := func(layer model.Layer) string {
+		if r := it.Latest.LayerRevision(layer); r != nil && r.RevisionID != "" {
+			return shortHash(r.RevisionID)
+		}
+		return "-"
+	}
+	return cell(model.LayerGlobal), cell(model.LayerAccount)
+}
+
 // resort re-sorts items by the current key/order and rebuilds the rows.
 func (m *uiModel) resort() {
 	model.SortSummaries(m.items, m.sortKey, m.sortOrder)
@@ -872,7 +920,9 @@ func (m *uiModel) applyFilter() {
 			name = "-"
 		}
 		global, acct := m.resultCells(it)
-		rows = append(rows, table.Row{name, it.AccountID, string(rowStatus(it)), global, acct, last})
+		globalRev, acctRev := revCells(it)
+		rows = append(rows, table.Row{name, it.AccountID, string(rowStatus(it)), global, acct,
+			globalRev, acctRev, last})
 		visible = append(visible, it)
 	}
 	m.table.SetRows(rows)

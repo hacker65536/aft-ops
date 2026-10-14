@@ -316,3 +316,49 @@ func TestRevisionJSONRoundTrip(t *testing.T) {
 		t.Errorf("Message() after round trip = %q", out.Message())
 	}
 }
+
+func TestLayerRevision(t *testing.T) {
+	e := Execution{Revisions: []Revision{
+		{ActionName: "aft-account-customizations", RevisionID: "acct"},
+		{ActionName: "aft-global-customizations", RevisionID: "glob"},
+	}}
+	if r := e.LayerRevision(LayerGlobal); r == nil || r.RevisionID != "glob" {
+		t.Errorf("global = %+v, want glob", r)
+	}
+	if r := e.LayerRevision(LayerAccount); r == nil || r.RevisionID != "acct" {
+		t.Errorf("account = %+v, want acct", r)
+	}
+	if r := (Execution{}).LayerRevision(LayerGlobal); r != nil {
+		t.Errorf("no revisions = %+v, want nil", r)
+	}
+}
+
+// Revision keys bunch rows that ran the same commit; rows without a revision
+// for the layer sink in either order.
+func TestSortByRevision(t *testing.T) {
+	withRevs := func(name, global, account string) PipelineSummary {
+		p := sumT(name, at("2026-01-01T00:00:00Z"), StatusSucceeded)
+		if global != "" {
+			p.Latest.Revisions = append(p.Latest.Revisions,
+				Revision{ActionName: "aft-global-customizations", RevisionID: global})
+		}
+		if account != "" {
+			p.Latest.Revisions = append(p.Latest.Revisions,
+				Revision{ActionName: "aft-account-customizations", RevisionID: account})
+		}
+		return p
+	}
+	items := []PipelineSummary{
+		withRevs("delta", "bbb", "111"),
+		withRevs("alpha", "", "222"),
+		withRevs("charlie", "aaa", "222"),
+		withRevs("bravo", "bbb", ""),
+		sumT("echo", nil, ""),
+	}
+	SortSummaries(items, SortByGlobalRev, OrderAsc)
+	eq(t, names(items), []string{"charlie", "bravo", "delta", "alpha", "echo"})
+	SortSummaries(items, SortByGlobalRev, OrderDesc)
+	eq(t, names(items), []string{"bravo", "delta", "charlie", "alpha", "echo"})
+	SortSummaries(items, SortByAccountRev, OrderAsc)
+	eq(t, names(items), []string{"delta", "alpha", "charlie", "bravo", "echo"})
+}

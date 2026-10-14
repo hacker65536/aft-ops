@@ -16,11 +16,18 @@ exit 0
         "last_update": "<TIMESTAMP>",
         "revisions": [
           {
+            "action_name": "aft-global-customizations",
+            "revision_id": "e9ceabf3acda4d1dd0e3e1046639a766e6bb62c1",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"fix(guardduty): enable S3 protection org-wide\"}",
+            "url": "https://github.com/example-org/aft-global-customizations/commit/e9ceabf3acda4d1dd0e3e1046639a766e6bb62c1",
+            "message": "fix(guardduty): enable S3 protection org-wide"
+          },
+          {
             "action_name": "aft-account-customizations",
-            "revision_id": "d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2",
-            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat: add S3 lifecycle rules to the log buckets\"}",
-            "url": "https://github.com/example-org/aft-account-customizations/commit/d133fd6aa5a267fa0e96899fac3a5a269ac3a5a2",
-            "message": "feat: add S3 lifecycle rules to the log buckets"
+            "revision_id": "f7cc866c68e7815520956589d18eced0f9dfa83f",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"chore(data-lake): rotate the glue crawler role\"}",
+            "url": "https://github.com/example-org/aft-account-customizations/commit/f7cc866c68e7815520956589d18eced0f9dfa83f",
+            "message": "chore(data-lake): rotate the glue crawler role"
           }
         ]
       },
@@ -37,11 +44,18 @@ exit 0
         "last_update": "<TIMESTAMP>",
         "revisions": [
           {
+            "action_name": "aft-global-customizations",
+            "revision_id": "4dd6aefcfb9e671f20c689753d33ff1bb12b82a6",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"chore: bump the aws provider to 6.14\"}",
+            "url": "https://github.com/example-org/aft-global-customizations/commit/4dd6aefcfb9e671f20c689753d33ff1bb12b82a6",
+            "message": "chore: bump the aws provider to 6.14"
+          },
+          {
             "action_name": "aft-account-customizations",
-            "revision_id": "5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7",
-            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat(security): enable GuardDuty in every enabled region\"}",
-            "url": "https://github.com/example-org/aft-account-customizations/commit/5bd6b82fe8b7ad70ffa2deb5a7fe8b7a1a7fe8b7",
-            "message": "feat(security): enable GuardDuty in every enabled region"
+            "revision_id": "8166142c01394dcc0c2dd7fa763c1f70eedc6f0f",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat(payments): add the settlement queue\"}",
+            "url": "https://github.com/example-org/aft-account-customizations/commit/8166142c01394dcc0c2dd7fa763c1f70eedc6f0f",
+            "message": "feat(payments): add the settlement queue"
           }
         ]
       },
@@ -58,11 +72,18 @@ exit 0
         "last_update": "<TIMESTAMP>",
         "revisions": [
           {
+            "action_name": "aft-global-customizations",
+            "revision_id": "4dd6aefcfb9e671f20c689753d33ff1bb12b82a6",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"chore: bump the aws provider to 6.14\"}",
+            "url": "https://github.com/example-org/aft-global-customizations/commit/4dd6aefcfb9e671f20c689753d33ff1bb12b82a6",
+            "message": "chore: bump the aws provider to 6.14"
+          },
+          {
             "action_name": "aft-account-customizations",
-            "revision_id": "3862f4495e70c5e83179c31760c5e70cc60c5e70",
-            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"fix: allow the org-wide read-only role to assume\"}",
-            "url": "https://github.com/example-org/aft-account-customizations/commit/3862f4495e70c5e83179c31760c5e70cc60c5e70",
-            "message": "fix: allow the org-wide read-only role to assume"
+            "revision_id": "8166142c01394dcc0c2dd7fa763c1f70eedc6f0f",
+            "summary": "{\"ProviderType\":\"GitHub\",\"CommitMessage\":\"feat(payments): add the settlement queue\"}",
+            "url": "https://github.com/example-org/aft-account-customizations/commit/8166142c01394dcc0c2dd7fa763c1f70eedc6f0f",
+            "message": "feat(payments): add the settlement queue"
           }
         ]
       },

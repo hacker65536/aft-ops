@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // markSpans swaps the row renderer for one that brackets each styled span, so
@@ -272,5 +273,53 @@ func TestStyleTableViewRedensFetchError(t *testing.T) {
 	}
 	if got := plain(out); got != tb.View() {
 		t.Errorf("styling changed the laid-out text:\n%q\nwant\n%q", got, tb.View())
+	}
+}
+
+// markSortedHeader rebuilds bubbles' header itself, so it must agree with
+// the real one: the rebuilt plain header matches bubbles', and the marked one
+// reads exactly as bubbles would draw the arrowed title, colored.
+func TestMarkSortedHeader(t *testing.T) {
+	cols := columns(160)
+	tb := newScreenTable(cols)
+	tb.SetRows([]table.Row{{"alpha", "111111111111", "Succeeded", "·", "·", "5368c27b", "9752f0ad", "-"}})
+	view := tb.View()
+	if !strings.HasPrefix(view, headerView(cols, -1, "")+"\n") {
+		t.Fatalf("headerView disagrees with bubbles:\n%q\n%q", headerView(cols, -1, ""), view)
+	}
+
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	view = tb.View()
+
+	// The marked view is what bubbles draws for the arrowed title, plus color.
+	arrowed := append([]table.Column(nil), cols...)
+	arrowed[listGlobalRev].Title += "↓"
+	want := newScreenTable(arrowed)
+	want.SetRows(tb.Rows())
+	got := markSortedHeader(view, cols, listGlobalRev, "↓")
+	if ansi.Strip(got) != ansi.Strip(want.View()) {
+		t.Fatalf("text = \n%s\nwant\n%s", ansi.Strip(got), ansi.Strip(want.View()))
+	}
+	if !strings.Contains(ansi.Strip(got), "GLB REV↓") {
+		t.Fatalf("arrow missing or truncated:\n%s", ansi.Strip(got))
+	}
+	if got == want.View() {
+		t.Fatal("sorted header not colored")
+	}
+	if markSortedHeader(view, cols, -1, "↓") != view {
+		t.Error("no sort column should leave the view alone")
+	}
+	if markSortedHeader("not a table", cols, listGlobalRev, "↓") != "not a table" {
+		t.Error("a view whose header does not match should be left alone")
+	}
+}
+
+func TestSortColCoversEveryKey(t *testing.T) {
+	for _, k := range sortCycle {
+		if sortCol(k) < 0 {
+			t.Errorf("sort key %q marks no column", k)
+		}
 	}
 }

@@ -2,4 +2,4 @@ $ aft-ops pipeline list --sort bogus
 exit 2
 --- stdout ---
 --- stderr ---
-Error: invalid sort key "bogus" (want last-update|status|account)
+Error: invalid sort key "bogus" (want last-update|status|account|global-rev|account-rev)

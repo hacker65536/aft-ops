@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/hacker65536/aft-ops/internal/core/model"
 )
@@ -33,6 +34,11 @@ var (
 	// and costs no width.
 	selectedRowStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7"))
+	// sortedHeaderColor marks the title of the column a list is sorted by.
+	// Text color rather than a background: a cyan background is the cursor's.
+	// The title also carries the order arrow, so the mark survives a
+	// colorless terminal.
+	sortedHeaderColor = lipgloss.Color("6")
 )
 
 // alarming reports whether a STATUS cell should be reddened.
@@ -75,6 +81,40 @@ func screenTableStyles(t cursorTint) table.Styles {
 		st.Selected = st.Selected.Underline(true)
 	}
 	return st
+}
+
+// headerView renders a table header the way bubbles/table's headersView
+// does, with the title of column accent (if any; -1 for none) in
+// sortedHeaderColor and followed by arrow.
+func headerView(cols []table.Column, accent int, arrow string) string {
+	hdr := screenTableStyles(cursorTint{}).Header
+	s := make([]string, 0, len(cols))
+	for i, col := range cols {
+		if col.Width <= 0 {
+			continue
+		}
+		title := lipgloss.NewStyle().Width(col.Width).MaxWidth(col.Width).Inline(true)
+		text := col.Title
+		if i == accent {
+			title = title.Foreground(sortedHeaderColor)
+			text += arrow
+		}
+		s = append(s, hdr.Render(title.Render(runewidth.Truncate(text, col.Width, "…"))))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, s...)
+}
+
+// markSortedHeader swaps the header of a rendered table view for one whose
+// sorted column stands out: its title colored and followed by the order
+// arrow ("STATUS↓"). Like the row styling it depends on how bubbles lays the
+// header out, so it checks the plain header it rebuilds against the view and
+// leaves the view alone on a mismatch rather than garble it.
+func markSortedHeader(view string, cols []table.Column, sorted int, arrow string) string {
+	plain := headerView(cols, -1, "")
+	if sorted < 0 || !strings.HasPrefix(view, plain+"\n") {
+		return view
+	}
+	return headerView(cols, sorted, arrow) + view[len(plain):]
 }
 
 // syncCursorTint restyles the cursor row only when what it must convey

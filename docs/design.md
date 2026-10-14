@@ -391,12 +391,14 @@ merge しても発火しないため未適用コミットが積み上がり続�
 引き上げ、一覧・Actions 画面・CLI の 3 つが同じ部品を使う。
 
 ```
-ACCOUNT NAME     ACCOUNT ID    STATUS      GLOBAL     ACCOUNT    LAST UPDATE
-app-staging      123456789012  Succeeded   +0 ~1 -0   ·          2026-10-07 10:44
-payments-prod    111122223333  Failed      ✗ error    —          2026-10-07 10:40
-search-dev       444455556666  InProgress  ·          running    2026-10-07 10:57
-data-lake-prod   777788889999  Succeeded   …          …          2026-10-07 10:35
+ACCOUNT NAME     ACCOUNT ID    STATUS      GLOBAL     ACCOUNT    GLB REV   ACC REV   LAST UPDATE↓
+app-staging      123456789012  Succeeded   +0 ~1 -0   ·          4dd6aefc  8166142c  2026-10-07 10:44
+payments-prod    111122223333  Failed      ✗ error    —          4dd6aefc  8166142c  2026-10-07 10:40
+search-dev       444455556666  InProgress  ·          running    4dd6aefc  8166142c  2026-10-07 10:57
+data-lake-prod   777788889999  Succeeded   …          …          e9ceabf3  eaff502a  2026-10-07 10:35
 ```
+
+（GLB REV / ACC REV 列とソート列の矢印は §9.1 の「一覧の revision 列」を参照）
 
 #### 判定（`core/logs`）と表示の分離
 
@@ -707,7 +709,7 @@ aft-ops tui                      # 明示的 TUI 起動
 aft-ops pipeline list            # F1: 状態一覧（alias: pl ls）。status は TTL 内キャッシュ供給
     --status Failed,InProgress   # ステータスフィルタ
     --account <name|id|部分一致>
-    --sort last-update|status|account  # 既定 last-update（status は重大度順: Failed → … → Succeeded）
+    --sort last-update|status|account|global-rev|account-rev  # 既定 last-update（status は重大度順: Failed → … → Succeeded。*-rev は最新実行の commit hash の辞書順）
     --order asc|desc             # 既定 desc（未実行=時間なしは常に末尾）
     --refresh                    # 全 status を強制再取得（inventory/accounts も）
     --watch [--interval 30s]     # 定期再取得（既定間隔は tui.poll_interval）。table 出力専用
@@ -831,10 +833,24 @@ CodePipeline の実データモデル（pipeline → executions → action execu
   `[status: …]` → 件数 → `[account region]` → `[sort: …]`）。幅が足りない端末で切れるのは
   末尾なので、切れるのはソート順であって結果の完了表示ではない。接続先アカウントは
   取り違え防止のためソート順より前に残す
+- 一覧の revision 列（実装済み）: GLB REV / ACC REV 列を GLOBAL / ACCOUNT 列と LAST UPDATE の間に置き、
+  最新実行の `SourceRevisions` から aft-global-customizations / aft-account-customizations の
+  commit hash（先頭 8 桁）を出す。status と同じ `ListPipelineExecutions` の結果を使うので
+  追加の API 呼び出しはない。表示するのはその実行の Source 段が取り込んだ commit であり、
+  リポジトリの現在の HEAD ではない。該当する revision が無い行は `-`。
+  `s` の巡回に `global-rev` / `account-rev` を含め、hash の辞書順で並べる（同じ commit で
+  走ったアカウントがまとまることが目的で、hash の順序自体に意味はない。commit 日時は
+  `SourceRevisions` に無く、取得のための追加 API 呼び出しはしない）。revision の無い行は
+  昇降順に関係なく末尾
 - 一覧キー（実装済み）: `/` フィルタ・`f` ステータス切替・`s` ソートキー巡回
-  (last-update→status→account)・`o` 昇降順トグル・`l`/`enter` 実行履歴画面・`v` ログ直行・
+  (last-update→status→account→global-rev→account-rev)・`o` 昇降順トグル・`l`/`enter` 実行履歴画面・`v` ログ直行・
   `space` 選択トグル・`x` 一括 release・`r` 選択行のみ再取得・`R` 全件再取得・`q` 終了。
   既定ソートは last-update 降順（CLI と同一のコア `model.SortSummaries`）。
+  ソート中の列は列見出しを cyan にし、右に昇降順の矢印を付ける（`STATUS↓` / `GLB REV↑`）。
+  背景 cyan はカーソル行が使うので文字色にする。矢印は色の出ない端末でも残る。
+  矢印は East Asian Ambiguous 幅で CJK ロケールでは 2 桁に数えられるため、REV 列は 9 桁にしている。
+  bubbles の header を自前で再描画して差し替えるため、素の header が bubbles の描画と一致しない
+  ときは差し替えない（`markSortedHeader`）。
   release 対象に選んだ行は**行全体をハイライト**（マーカー列は持たない）、header に `[N selected]`
 - **行スタイリング（`internal/tui/statuscolor.go`）**: bubbles の table はセル値を
   「エスケープ列を可視幅として数える」ヘルパーで切り詰めるため、行データに色を埋めると壊れる

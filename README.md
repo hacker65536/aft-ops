@@ -72,6 +72,10 @@ go build -o aft-ops ./cmd/aft-ops
 # add the latest terraform result of each layer (GLOBAL / ACCOUNT columns)
 ./aft-ops pipeline list --results
 
+# group by the account-customizations commit each latest run applied
+# (the table has no hash column; -o json carries it under latest_execution.revisions)
+./aft-ops pipeline list --sort account-rev -o json
+
 # keep watching while something is running
 ./aft-ops pipeline list --watch --interval 30s
 
@@ -127,6 +131,16 @@ Pipeline list ──▶ Executions ──▶ Actions ──▶ Log
   list appears, failed rows first. The header tells you whether they are
   complete: `results ⠋ 120/200` while reading, `results ✓ 200/200` once done,
   plus `· N unreadable` for rows showing `?` (`r` on a row retries it)
+- The GLB REV / ACC REV columns show the commit (short hash) of
+  aft-global-customizations / aft-account-customizations that the latest
+  execution's source stage picked up — what that run applied, not the
+  repositories' current HEAD. They come with the status read, at no extra
+  API cost
+- `s` cycles the sort key (last-update → status → account → global-rev →
+  account-rev) and `o` flips the order; the sorted column's title is colored
+  and carries the order arrow (`STATUS↓`, `GLB REV↑`). The revision keys sort
+  by hash, which has no meaning of its own but bunches the accounts that ran
+  the same commit, so the ones still on an older commit stand out
 - Actions show each action's terraform verdict (`Apply complete! ...` /
   `Error: ...`) from the same results, with plan-colored counts
 - `space` multi-select + `x` triggers batch Release change (guarded by

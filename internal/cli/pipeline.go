@@ -458,7 +458,7 @@ func newPipelineListCmd(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&failOnError, "fail-on-error", false,
 		"exit 1 when any pipeline is Failed or could not be fetched")
 	cmd.Flags().StringVar(&sortKey, "sort", string(model.SortByLastUpdate),
-		"sort by: last-update|status|account")
+		"sort by: "+model.SortKeyValues)
 	cmd.Flags().StringVar(&sortOrder, "order", string(model.OrderDesc),
 		"sort order: asc|desc")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false,
